@@ -10,6 +10,7 @@ import subprocess
 import docker
 import sys
 import os
+import re
 
 # time to sleep between scrapes
 UPDATE_PERIOD = int(os.environ.get('UPDATE_PERIOD', 30))
@@ -42,6 +43,16 @@ LEDGER_PENALTY = prometheus_client.Gauge('validator_ledger',
                               'Validator performance metrics ',
                              ['resource_type'])
 
+def try_int(v):
+  if re.match(r"^\-?\d+$", v):
+    return int(v)
+  return v
+
+def try_float(v):
+  if re.match(r"^\-?[\d\.]+$", v):
+    return float(v)
+  return v
+
 def stats():
   dc = docker.DockerClient()
   docker_container = dc.containers.get(VALIDATOR_CONTAINER_NAME)
@@ -73,7 +84,11 @@ def stats():
 
   # collect current block age
   out = docker_container.exec_run('miner info block_age')
-  BLOCKAGE.labels('BlockAge').set(out.output)
+  ## transform into a number
+  age_val = try_int(out.output.rstrip(b"\n").decode('utf-8'))
+
+  BLOCKAGE.labels('BlockAge').set(age_val)
+  print(f"age: {age_val}")
 
   # parse the hbbft performance table for the penalty field
   out = docker_container.exec_run('miner hbbft perf')
@@ -83,7 +98,7 @@ def stats():
     if hotspot_name in line and len(line.split()) > 12:
       results = line.split()[12]
       PENALTY.labels('Penalty').set(results)
-
+      print(f"pen: {results}")
 
   # peer book -s output
   out=docker_container.exec_run('miner peer book -s')
@@ -96,8 +111,11 @@ def stats():
       garbage1,address,peer_name,listen_add,connections,nat,last_update,garbage2=c
     elif len(c)==6:
       sessions=sessions+1
-  CONNECTIONS.labels('connections').set(connections.strip())
+  conns_num = try_int(connections.strip().decode('utf-8'))
+  CONNECTIONS.labels('connections').set(conns_num)
+  print(f"conns: {conns_num}")
   SESSIONS.labels('sessions').set(sessions-1)
+  print(f"sess: {sessions-1}")
 
   # ledger validators output
   out=docker_container.exec_run('miner ledger validators')
@@ -106,14 +124,17 @@ def stats():
   validators={}
   for line in results:
     c=line.split(b'|')
-    try:
-      garbage,val_name,address,last_heard,stake,status,version,penalty,garbage2=c
+    if len(c) == 9:
+      (_,val_name,address,last_heard,stake,status,version,penalty,_) = c
       val_name_str=val_name.strip().decode('utf-8')
       if val_name_str in hotspot_name_str:
-        validators[hotspot_name_str]=penalty.strip()
-    except:
-      pass
+        penalty_val = try_float(penalty.strip().decode('utf-8'))
+        validators[hotspot_name_str] = penalty_val
+    else:
+      print(f"failed to grok line: {c}")
+
   LEDGER_PENALTY.labels('ledger_penalty').set(validators[hotspot_name_str])
+  print(f"vals: {validators[hotspot_name_str]}")
 
 
 if __name__ == '__main__':
