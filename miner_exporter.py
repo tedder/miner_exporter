@@ -32,6 +32,15 @@ BLOCKAGE = prometheus_client.Gauge('validator_block_age',
 PENALTY = prometheus_client.Gauge('validator_hbbft_penalty',
                               'HBBFT Penalty metrit from perf ',
                              ['resource_type'])
+CONNECTIONS = prometheus_client.Gauge('validator_connections',
+                              'Number of libp2p connections ',
+                             ['resource_type'])   
+SESSIONS = prometheus_client.Gauge('validator_sessions',
+                              'Number of libp2p sessions',
+                             ['resource_type'])                                         
+LEDGER_PENALTY = prometheus_client.Gauge('validator_ledger',
+                              'Validator performance metrics ',
+                             ['resource_type'])
 
 def stats():
   dc = docker.DockerClient()
@@ -73,6 +82,37 @@ def stats():
     if hotspot_name in line:
       results = line.split()[12]
       PENALTY.labels('Penalty').set(results)
+
+
+  # peer book -s output
+  out=docker_container.exec_run('miner peer book -s')
+  results=out.output.split(b"\n")
+  # parse the peer book output  
+  sessions=0  
+  for line in results:
+    c=line.split(b'|')
+    if len(c)==8:
+      garbage1,address,peer_name,listen_add,connections,nat,last_update,garbage2=c
+    elif len(c)==6:
+      sessions=sessions+1
+  CONNECTIONS.labels('connections').set(connections.strip())
+  SESSIONS.labels('sessions').set(sessions-1)
+
+  # ledger validators output
+  out=docker_container.exec_run('miner ledger validators')
+  results=out.output.split(b"\n")
+  # parse the ledger validators output  
+  validators={}
+  for line in results:
+    c=line.split(b'|')
+    try:
+      garbage,val_name,address,last_heard,stake,status,version,penalty,garbage2=c
+      val_name_str=val_name.strip().decode('utf-8')
+      if val_name_str in hotspot_name_str:
+        validators[hotspot_name_str]=penalty.strip()
+    except:
+      pass
+  LEDGER_PENALTY.labels('ledger_penalty').set(validators[hotspot_name_str])
 
 
 if __name__ == '__main__':
