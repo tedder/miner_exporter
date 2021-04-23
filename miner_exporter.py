@@ -35,10 +35,10 @@ PENALTY = prometheus_client.Gauge('validator_hbbft_penalty',
                              ['resource_type'])
 CONNECTIONS = prometheus_client.Gauge('validator_connections',
                               'Number of libp2p connections ',
-                             ['resource_type'])   
+                             ['resource_type'])
 SESSIONS = prometheus_client.Gauge('validator_sessions',
                               'Number of libp2p sessions',
-                             ['resource_type'])                                         
+                             ['resource_type'])
 LEDGER_PENALTY = prometheus_client.Gauge('validator_ledger',
                               'Validator performance metrics ',
                              ['resource_type'])
@@ -76,10 +76,11 @@ def stats():
   # check if currently in consensus group
   out = docker_container.exec_run('miner info in_consensus')
   print(out.output)
+  incon_txt = out.output.rstrip(b"\n").decode('utf-8')
   incon = 0
-  if out.output.rstrip(b"\n") == 'true':
+  if incon_txt == 'true':
     incon = 1
-  print(f"in consensus? {incon}")
+  print(f"in consensus? {incon} / {incon_txt}")
   INCON.labels(hotspot_name_str).set(incon)
 
   # collect current block age
@@ -97,14 +98,14 @@ def stats():
   for line in results:
     if hotspot_name in line and len(line.split()) > 12:
       results = line.split()[12]
-      PENALTY.labels('Penalty').set(results)
       print(f"pen: {results}")
+      PENALTY.labels('Penalty').set(results)
 
   # peer book -s output
   out=docker_container.exec_run('miner peer book -s')
   results=out.output.split(b"\n")
-  # parse the peer book output  
-  sessions=0  
+  # parse the peer book output
+  sessions=0
   for line in results:
     c=line.split(b'|')
     if len(c)==8:
@@ -120,7 +121,7 @@ def stats():
   # ledger validators output
   out=docker_container.exec_run('miner ledger validators')
   results=out.output.split(b"\n")
-  # parse the ledger validators output  
+  # parse the ledger validators output
   validators={}
   for line in results:
     c=line.split(b'|')
