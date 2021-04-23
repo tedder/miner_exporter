@@ -67,7 +67,8 @@ def stats():
   print(out.output)
   incon = 0
   if out.output.rstrip(b"\n") == 'true':
-    incon=1
+    incon = 1
+  print(f"in consensus? {incon}")
   INCON.labels(hotspot_name_str).set(incon)
 
   # collect current block age
@@ -79,7 +80,7 @@ def stats():
   print(out.output)
   results = out.output.split(b"\n")
   for line in results:
-    if hotspot_name in line:
+    if hotspot_name in line and len(line.split()) > 12:
       results = line.split()[12]
       PENALTY.labels('Penalty').set(results)
 
