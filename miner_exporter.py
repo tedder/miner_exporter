@@ -50,15 +50,16 @@ def stats():
   # need to fix this. hotspot name really should only be queried once
   out = docker_container.exec_run('miner info name')
   print(out.output)
-  hotspot_name=out.output.rstrip(b"\n")
+  hotspot_name = out.output.rstrip(b"\n")
+  hotspot_name_str = hotspot_name.decode('utf-8')
 
   # check if currently in consensus group
   out = docker_container.exec_run('miner info in_consensus')
   print(out.output)
   incon = 0
-  if out.output.rstrip(b"\n")=='true':
+  if out.output.rstrip(b"\n") == 'true':
     incon=1
-  INCON.labels(hotspot_name).set(incon)
+  INCON.labels(hotspot_name_str).set(incon)
 
   # collect current block age
   out = docker_container.exec_run('miner info block_age')
@@ -67,10 +68,10 @@ def stats():
   # parse the hbbft performance table for the penalty field
   out = docker_container.exec_run('miner hbbft perf')
   print(out.output)
-  results=out.output.split(b"\n")
+  results = out.output.split(b"\n")
   for line in results:
     if hotspot_name in line:
-      results=line.split()[12]
+      results = line.split()[12]
       PENALTY.labels('Penalty').set(results)
 
 
