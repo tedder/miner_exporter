@@ -19,12 +19,12 @@ Details on the libraries:
 Please note this is only the exporter. Prometheus and Grafana server are required. They can be run on the same machine or external.
 
 ## Docker version
-Using the docker file, you can run this with Docker or docker-compose!
+Using the docker file, you can run this with Docker or docker-compose! Both of these expose Prometheus on 9152, feel free to choose your own port.
 
 ### Docker
 ```
 docker build . -tag me
-docker run -v /var/run/docker.sock:/var/run/docker.sock me
+docker run -p 9152:8000 -v /var/run/docker.sock:/var/run/docker.sock me
 ```
 
 ### Docker-Compose
@@ -41,4 +41,6 @@ services:
     container_name: miner_exporter
     volumes:
     - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+    - "9152:8000"
 ```
