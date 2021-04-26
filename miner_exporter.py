@@ -42,7 +42,7 @@ SESSIONS = prometheus_client.Gauge('validator_sessions',
 LEDGER_PENALTY = prometheus_client.Gauge('validator_ledger',
                               'Validator performance metrics ',
                              ['resource_type', 'subtype'])
-MINER_VERSION = prometheus_client.Info('miner_version',
+VALIDATOR_VERSION = prometheus_client.Info('validator_version',
                               'Version number of the miner container')
 
 miner_facts = {}
@@ -238,7 +238,7 @@ def collect_miner_version(docker_container):
     if m := re.match('^\*\s+([\d\.]+)(.*)', line):
       miner_version = m.group(1)
       print(f"found miner version: {miner_version}")
-      MINER_VERSION.info({'version': miner_version})
+      VALIDATOR_VERSION.info({'version': miner_version})
 
 
 if __name__ == '__main__':
