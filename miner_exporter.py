@@ -33,6 +33,25 @@ BLOCKAGE = prometheus_client.Gauge('validator_block_age',
 PENALTY = prometheus_client.Gauge('validator_hbbft_penalty',
                               'HBBFT Penalty metric from perf, only applies when in CG',
                              ['resource_type'])
+BBA_VOTES = prometheus_client.Gauge('validator_hbbft_bba_votes',
+                              'HBBFT bba completions metric from perf, only applies when in CG',
+                             ['resource_type'])
+BBA_TOTAL = prometheus_client.Gauge('validator_hbbft_bba_total',
+                              'HBBFT bba total completions metric from perf, only applies when in CG',
+                             ['resource_type'])
+SEEN_VOTES = prometheus_client.Gauge('validator_hbbft_seen_votes',
+                              'HBBFT seen votes metric from perf, only applies when in CG',
+                             ['resource_type'])
+SEEN_TOTAL = prometheus_client.Gauge('validator_hbbft_seen_total',
+                              'HBBFT seen total metric from perf, only applies when in CG',
+                             ['resource_type'])
+BBA_LAST = prometheus_client.Gauge('validator_hbbft_bba_last',
+                              'HBBFT last bba from perf, only applies when in CG',
+                             ['resource_type'])
+SEEN_LAST = prometheus_client.Gauge('validator_hbbft_seen_last',
+                              'HBBFT last seen from perf, only applies when in CG',
+                             ['resource_type'])
+                                                                                                                                                                        
 CONNECTIONS = prometheus_client.Gauge('validator_connections',
                               'Number of libp2p connections ',
                              ['resource_type'])
@@ -158,9 +177,25 @@ def collect_hbbft_performance(docker_container, hotspot_name_str):
 
     if len(c) == 6 and hotspot_name_str == c[0]:
       print(f"resl: {c}; {hotspot_name_str}/{c[0]}")
+      (bba_votes,bba_tot)=c[1].split("/")
+      (seen_votes,seen_tot)=c[2].split("/")
+      bba_last_val=try_float(c[3])
+      seen_last_val=try_float(c[4])
       pen_val = try_float(c[5])
-      print(f"pen: {pen_val}")
       PENALTY.labels('Penalty').set(pen_val)
+      BBA_TOTAL.labels('BBA_Total').set(bba_tot)
+      BBA_VOTES.labels('BBA_Votes').set(bba_votes)
+      SEEN_TOTAL.labels('Seen_Total').set(seen_tot)
+      SEEN_VOTES.labels('Seen_Votes').set(seen_votes)
+      BBA_LAST.labels('BBA_Last').set(bba_last_val)
+      SEEN_LAST.labels('Seen_Last').set(seen_last_val)
+      print(f"pen: {pen_val}")
+      print(f"bba completions: {bba_votes}")
+      print(f"bba total: {bba_tot}")
+      print(f"bba last: {bba_last_val}")
+      print(f"seen votes: {seen_votes}")
+      print(f"seen total: {seen_tot}")
+      print(f"seen last: {seen_last_val}")
     elif len(c) == 6:
       # not our line
       pass
