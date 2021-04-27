@@ -189,10 +189,9 @@ def collect_peer_book(docker_container, hotspot_name_str):
     if len(c) == 6:
       print(f"peerbook entry6: {c}")
       (address,peer_name,listen_add,connections,nat,last_update) = c
-      conns_num = try_int(connections.strip())
+      conns_num = try_int(connections)
 
-      if hotspot_name_str == address and isinstance(conns_num, int):
-        print(f"conns: {conns_num}")
+      if hotspot_name_str == peer_name and isinstance(conns_num, int):
         CONNECTIONS.labels('connections').set(conns_num)
 
     elif len(c) == 4:
