@@ -31,7 +31,7 @@ BLOCKAGE = prometheus_client.Gauge('validator_block_age',
                               'Age of the current block',
                              ['resource_type'])
 PENALTY = prometheus_client.Gauge('validator_hbbft_penalty',
-                              'HBBFT Penalty metrit from perf ',
+                              'HBBFT Penalty metric from perf, only applies when in CG',
                              ['resource_type'])
 CONNECTIONS = prometheus_client.Gauge('validator_connections',
                               'Number of libp2p connections ',
@@ -148,68 +148,88 @@ def collect_block_age(docker_container):
 
 def collect_hbbft_performance(docker_container, hotspot_name_str):
   # parse the hbbft performance table for the penalty field
-  out = docker_container.exec_run('miner hbbft perf')
-  print(out.output)
+  out = docker_container.exec_run('miner hbbft perf --format csv')
+  #print(out.output)
   for line in out.output.decode('utf-8').split("\n"):
-    c = [x.strip() for x in line.split('|')]
-    if len(c) == 8 and hotspot_name_str.startswith(c[1]):
-      print(f"resl: {c}; {hotspot_name_str}/{c[1]}")
-      pen_val = try_float(c[6])
+    c = [x.strip() for x in line.split(',')]
+    # samples:
+    # name,bba_completions,seen_votes,last_bba,last_seen,penalty
+    # curly-peach-owl,11/11,368/368,0,0,1.86
+
+    if len(c) == 6 and hotspot_name_str == c[0]:
+      print(f"resl: {c}; {hotspot_name_str}/{c[0]}")
+      pen_val = try_float(c[5])
       print(f"pen: {pen_val}")
       PENALTY.labels('Penalty').set(pen_val)
-    elif len(c) == 8:
+    elif len(c) == 6:
       # not our line
       pass
     elif len(line) == 0:
       # empty line
       pass
-    elif re.match('^[\+\-]+$', line):
-      # e.g., "+--------------+-------------"
-      # table formatting lines are fine
-      pass
     else:
-      print(f"wrong len for hbbft: {c}")
+      print(f"wrong len ({len(c)}) for hbbft: {c}")
 
 def collect_peer_book(docker_container, hotspot_name_str):
   # peer book -s output
-  out = docker_container.exec_run('miner peer book -s')
+  out = docker_container.exec_run('miner peer book -s --format csv')
   # parse the peer book output
+
+  # samples
+  # address,name,listen_addrs,connections,nat,last_updated
+  # /p2p/1YBkfTYH8iCvchuTevbCAbdni54geDjH95yopRRznZtAur3iPrM,bright-fuchsia-sidewinder,1,6,none,203.072s
+  # listen_addrs (prioritized)
+  # /ip4/174.140.164.130/tcp/2154
+  # local,remote,p2p,name
+  # /ip4/192.168.0.4/tcp/2154,/ip4/72.224.176.69/tcp/2154,/p2p/1YU2cE9FNrwkTr8RjSBT7KLvxwPF9i6mAx8GoaHB9G3tou37jCM,clever-sepia-bull
+
   sessions = 0
-  for line in out.output.decode('utf-8').split("\n"):
-    c = line.split('|')
-    if len(c) == 8:
-      print(f"peerbook entry8: {c}")
-      (_,address,peer_name,listen_add,connections,nat,last_update,_) = c
+  for line in out.output.decode('utf-8').split("\r\n"):
+    c = line.split(',')
+    if len(c) == 6:
+      print(f"peerbook entry6: {c}")
+      (address,peer_name,listen_add,connections,nat,last_update) = c
       conns_num = try_int(connections.strip())
 
-      if hotspot_name_str.startswith(peer_name) and isinstance(conns_num, int):
+      if hotspot_name_str == address and isinstance(conns_num, int):
         print(f"conns: {conns_num}")
         CONNECTIONS.labels('connections').set(conns_num)
 
-    elif len(c) == 6:
-      print(f"peerbook entry6: {c}")
-      sessions += 1
+    elif len(c) == 4:
+      # local,remote,p2p,name
+      print(f"peerbook entry4: {c}")
+      if c[0] != 'local':
+        sessions += 1
+    elif len(c) == 1:
+      print(f"peerbook entry1: {c}")
+      # listen_addrs
+      pass
+    else:
+      print(f"could not understand peer book line: {c}")
 
-  print(f"sess: {sessions-1}")
-  SESSIONS.labels('sessions').set(sessions-1)
+  print(f"sess: {sessions}")
+  SESSIONS.labels('sessions').set(sessions)
 
 def collect_ledger_validators(docker_container, hotspot_name_str):
   # ledger validators output
-  out = docker_container.exec_run('miner ledger validators')
-  results = out.output.split(b"\n")
+  out = docker_container.exec_run('miner ledger validators --format csv')
+  results = out.output.decode('utf-8').split("\n")
   # parse the ledger validators output
-  for line in results:
-    line = line.decode('utf-8')
-    c = line.split('|')
-    print(f"{len(c)} {c}")
-    if len(c) == 12:
-      (_,val_name,address,last_heard,stake,status,version,tenure_penalty,dkg_penalty,performance_penalty,total_penalty,_) = c
-      val_name_str = val_name.strip()
-      if hotspot_name_str.startswith(val_name_str):
-        tenure_penalty_val = try_float(tenure_penalty.strip())
-        dkg_penalty_val = try_float(dkg_penalty.strip())
-        performance_penalty_val = try_float(performance_penalty.strip())
-        total_penalty_val = try_float(total_penalty.strip())
+  for line in [x.rstrip("\r\n") for x in results]:
+    c = line.split(',')
+    #print(f"{len(c)} {c}")
+    if len(c) == 10:
+      if c[0] == 'name' and c[1] == 'owner_address':
+        # header line
+        continue
+
+      (val_name,address,last_heard,stake,status,version,tenure_penalty,dkg_penalty,performance_penalty,total_penalty) = c
+      if hotspot_name_str == val_name:
+        print(f"have pen line: {c}")
+        tenure_penalty_val = try_float(tenure_penalty)
+        dkg_penalty_val = try_float(dkg_penalty)
+        performance_penalty_val = try_float(performance_penalty)
+        total_penalty_val = try_float(total_penalty)
 
         LEDGER_PENALTY.labels('ledger_penalties', 'tenure').set(tenure_penalty_val)
         LEDGER_PENALTY.labels('ledger_penalties', 'dkg').set(dkg_penalty_val)
@@ -218,10 +238,6 @@ def collect_ledger_validators(docker_container, hotspot_name_str):
 
     elif len(line) == 0:
       # empty lines are fine
-      pass
-    elif re.match('^[\+\-]+$', line):
-      # e.g., "+--------------+-------------"
-      # table formatting lines are fine
       pass
     else:
       print(f"failed to grok line: {c}; section count: {len(c)}")
