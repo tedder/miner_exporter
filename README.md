@@ -5,7 +5,7 @@ This is only the exporter, which still requires a **prometheus server** for data
 
 
 ## Running via Docker
-Using the docker file, you can run this with Docker or docker-compose! Both of these expose Prometheus on 9152, feel free to choose your own port.
+Using the docker file, you can run this with Docker or docker-compose! Both of these expose Prometheus on 9152, feel free to choose your own port. The images are hosted on both [GHCR](https://github.com/users/tedder/packages/container/package/miner_exporter) and [Dockerhub](https://hub.docker.com/r/tedder42/miner_exporter).
 
 ### Docker client
 ```
