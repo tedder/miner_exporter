@@ -19,50 +19,49 @@ VALIDATOR_CONTAINER_NAME = os.environ.get('VALIDATOR_CONTAINER_NAME', 'validator
 # prometheus exporter types Gauge,Counter,Summary,Histogram,Info and Enum
 SYSTEM_USAGE = prometheus_client.Gauge('system_usage',
                                        'Hold current system resource usage',
-                                       ['resource_type'])
+                                       ['resource_type','validator_name'])
 VAL = prometheus_client.Gauge('validator_height',
                               'Height of the blockchain',
-                              ['resource_type'])
+                              ['resource_type','validator_name'])
 
 INCON = prometheus_client.Gauge('validator_inconsensus',
                               'Is validator currently in consensus group',
-                              ['resource_type'])
+                              ['validator_name'])
 BLOCKAGE = prometheus_client.Gauge('validator_block_age',
                               'Age of the current block',
-                             ['resource_type'])
+                             ['resource_type','validator_name'])
 PENALTY = prometheus_client.Gauge('validator_hbbft_penalty',
                               'HBBFT Penalty metric from perf, only applies when in CG',
-                             ['resource_type'])
+                             ['resource_type','validator_name'])
 BBA_VOTES = prometheus_client.Gauge('validator_hbbft_bba_votes',
                               'HBBFT bba completions metric from perf, only applies when in CG',
-                             ['resource_type'])
+                             ['resource_type','validator_name'])
 BBA_TOTAL = prometheus_client.Gauge('validator_hbbft_bba_total',
                               'HBBFT bba total completions metric from perf, only applies when in CG',
-                             ['resource_type'])
+                             ['resource_type','validator_name'])
 SEEN_VOTES = prometheus_client.Gauge('validator_hbbft_seen_votes',
                               'HBBFT seen votes metric from perf, only applies when in CG',
-                             ['resource_type'])
+                             ['resource_type','validator_name'])
 SEEN_TOTAL = prometheus_client.Gauge('validator_hbbft_seen_total',
                               'HBBFT seen total metric from perf, only applies when in CG',
-                             ['resource_type'])
+                             ['resource_type','validator_name'])
 BBA_LAST = prometheus_client.Gauge('validator_hbbft_bba_last',
                               'HBBFT last bba from perf, only applies when in CG',
-                             ['resource_type'])
+                             ['resource_type','validator_name'])
 SEEN_LAST = prometheus_client.Gauge('validator_hbbft_seen_last',
                               'HBBFT last seen from perf, only applies when in CG',
-                             ['resource_type'])
-                                                                                                                                                                        
+                             ['resource_type','validator_name'])
 CONNECTIONS = prometheus_client.Gauge('validator_connections',
                               'Number of libp2p connections ',
-                             ['resource_type'])
+                             ['resource_type','validator_name'])
 SESSIONS = prometheus_client.Gauge('validator_sessions',
                               'Number of libp2p sessions',
-                             ['resource_type'])
+                             ['resource_type','validator_name'])
 LEDGER_PENALTY = prometheus_client.Gauge('validator_ledger',
                               'Validator performance metrics ',
-                             ['resource_type', 'subtype'])
+                             ['resource_type', 'subtype','validator_name'])
 VALIDATOR_VERSION = prometheus_client.Info('validator_version',
-                              'Version number of the miner container')
+                              'Version number of the miner container',['validator_name'])
 
 miner_facts = {}
 
@@ -116,17 +115,17 @@ def stats():
   dc = docker.DockerClient()
   docker_container = dc.containers.get(VALIDATOR_CONTAINER_NAME)
   miner_facts = get_facts(docker_container)
+  hotspot_name_str = get_miner_name(docker_container)
 
   # collect total cpu and memory usage. Might want to consider just the docker
   # container with something like cadvisor instead
-  SYSTEM_USAGE.labels('CPU').set(psutil.cpu_percent())
-  SYSTEM_USAGE.labels('Memory').set(psutil.virtual_memory()[2])
+  SYSTEM_USAGE.labels('CPU', hotspot_name_str).set(psutil.cpu_percent())
+  SYSTEM_USAGE.labels('Memory', hotspot_name_str).set(psutil.virtual_memory()[2])
 
-  hotspot_name_str = get_miner_name(docker_container)
 
-  collect_miner_version(docker_container)
-  collect_block_age(docker_container)
-  collect_miner_height(docker_container)
+  collect_miner_version(docker_container, hotspot_name_str)
+  collect_block_age(docker_container, hotspot_name_str)
+  collect_miner_height(docker_container, hotspot_name_str)
   collect_in_consensus(docker_container, hotspot_name_str)
   collect_ledger_validators(docker_container, hotspot_name_str)
   collect_peer_book(docker_container, hotspot_name_str)
@@ -139,14 +138,14 @@ def get_miner_name(docker_container):
   hotspot_name = out.output.decode('utf-8').rstrip("\n")
   return hotspot_name
 
-def collect_miner_height(docker_container):
+def collect_miner_height(docker_container, miner_name):
   # grab the local blockchain height
   out = docker_container.exec_run('miner info height')
   print(out.output)
   txt = out.output.decode('utf-8').rstrip("\n")
-  VAL.labels('Height').set(out.output.split()[1])
+  VAL.labels('Height', miner_name).set(out.output.split()[1])
 
-def collect_in_consensus(docker_container, hotspot_name_str):
+def collect_in_consensus(docker_container, miner_name):
   # check if currently in consensus group
   out = docker_container.exec_run('miner info in_consensus')
   incon_txt = out.output.decode('utf-8').rstrip("\n")
@@ -154,18 +153,18 @@ def collect_in_consensus(docker_container, hotspot_name_str):
   if incon_txt == 'true':
     incon = 1
   print(f"in consensus? {incon} / {incon_txt}")
-  INCON.labels(hotspot_name_str).set(incon)
+  INCON.labels(miner_name).set(incon)
 
-def collect_block_age(docker_container):
+def collect_block_age(docker_container, miner_name):
   # collect current block age
   out = docker_container.exec_run('miner info block_age')
   ## transform into a number
   age_val = try_int(out.output.decode('utf-8').rstrip("\n"))
 
-  BLOCKAGE.labels('BlockAge').set(age_val)
+  BLOCKAGE.labels('BlockAge', miner_name).set(age_val)
   print(f"age: {age_val}")
 
-def collect_hbbft_performance(docker_container, hotspot_name_str):
+def collect_hbbft_performance(docker_container, miner_name):
   # parse the hbbft performance table for the penalty field
   out = docker_container.exec_run('miner hbbft perf --format csv')
   #print(out.output)
@@ -175,20 +174,20 @@ def collect_hbbft_performance(docker_container, hotspot_name_str):
     # name,bba_completions,seen_votes,last_bba,last_seen,penalty
     # curly-peach-owl,11/11,368/368,0,0,1.86
 
-    if len(c) == 6 and hotspot_name_str == c[0]:
-      print(f"resl: {c}; {hotspot_name_str}/{c[0]}")
+    if len(c) == 6 and miner_name == c[0]:
+      print(f"resl: {c}; {miner_name}/{c[0]}")
       (bba_votes,bba_tot)=c[1].split("/")
       (seen_votes,seen_tot)=c[2].split("/")
       bba_last_val=try_float(c[3])
       seen_last_val=try_float(c[4])
       pen_val = try_float(c[5])
-      PENALTY.labels('Penalty').set(pen_val)
-      BBA_TOTAL.labels('BBA_Total').set(bba_tot)
-      BBA_VOTES.labels('BBA_Votes').set(bba_votes)
-      SEEN_TOTAL.labels('Seen_Total').set(seen_tot)
-      SEEN_VOTES.labels('Seen_Votes').set(seen_votes)
-      BBA_LAST.labels('BBA_Last').set(bba_last_val)
-      SEEN_LAST.labels('Seen_Last').set(seen_last_val)
+      PENALTY.labels('Penalty', miner_name).set(pen_val)
+      BBA_TOTAL.labels('BBA_Total', miner_name).set(bba_tot)
+      BBA_VOTES.labels('BBA_Votes', miner_name).set(bba_votes)
+      SEEN_TOTAL.labels('Seen_Total', miner_name).set(seen_tot)
+      SEEN_VOTES.labels('Seen_Votes', miner_name).set(seen_votes)
+      BBA_LAST.labels('BBA_Last', miner_name).set(bba_last_val)
+      SEEN_LAST.labels('Seen_Last', miner_name).set(seen_last_val)
       print(f"pen: {pen_val}")
       print(f"bba completions: {bba_votes}")
       print(f"bba total: {bba_tot}")
@@ -205,7 +204,7 @@ def collect_hbbft_performance(docker_container, hotspot_name_str):
     else:
       print(f"wrong len ({len(c)}) for hbbft: {c}")
 
-def collect_peer_book(docker_container, hotspot_name_str):
+def collect_peer_book(docker_container, miner_name):
   # peer book -s output
   out = docker_container.exec_run('miner peer book -s --format csv')
   # parse the peer book output
@@ -226,8 +225,8 @@ def collect_peer_book(docker_container, hotspot_name_str):
       (address,peer_name,listen_add,connections,nat,last_update) = c
       conns_num = try_int(connections)
 
-      if hotspot_name_str == peer_name and isinstance(conns_num, int):
-        CONNECTIONS.labels('connections').set(conns_num)
+      if miner_name == peer_name and isinstance(conns_num, int):
+        CONNECTIONS.labels('connections', miner_name).set(conns_num)
 
     elif len(c) == 4:
       # local,remote,p2p,name
@@ -242,9 +241,9 @@ def collect_peer_book(docker_container, hotspot_name_str):
       print(f"could not understand peer book line: {c}")
 
   print(f"sess: {sessions}")
-  SESSIONS.labels('sessions').set(sessions)
+  SESSIONS.labels('sessions', miner_name).set(sessions)
 
-def collect_ledger_validators(docker_container, hotspot_name_str):
+def collect_ledger_validators(docker_container, miner_name):
   # ledger validators output
   out = docker_container.exec_run('miner ledger validators --format csv')
   results = out.output.decode('utf-8').split("\n")
@@ -258,17 +257,17 @@ def collect_ledger_validators(docker_container, hotspot_name_str):
         continue
 
       (val_name,address,last_heard,stake,status,version,tenure_penalty,dkg_penalty,performance_penalty,total_penalty) = c
-      if hotspot_name_str == val_name:
+      if miner_name == val_name:
         print(f"have pen line: {c}")
         tenure_penalty_val = try_float(tenure_penalty)
         dkg_penalty_val = try_float(dkg_penalty)
         performance_penalty_val = try_float(performance_penalty)
         total_penalty_val = try_float(total_penalty)
 
-        LEDGER_PENALTY.labels('ledger_penalties', 'tenure').set(tenure_penalty_val)
-        LEDGER_PENALTY.labels('ledger_penalties', 'dkg').set(dkg_penalty_val)
-        LEDGER_PENALTY.labels('ledger_penalties', 'performance').set(performance_penalty_val)
-        LEDGER_PENALTY.labels('ledger_penalties', 'total').set(total_penalty_val)
+        LEDGER_PENALTY.labels('ledger_penalties', 'tenure', miner_name).set(tenure_penalty_val)
+        LEDGER_PENALTY.labels('ledger_penalties', 'dkg', miner_name).set(dkg_penalty_val)
+        LEDGER_PENALTY.labels('ledger_penalties', 'performance', miner_name).set(performance_penalty_val)
+        LEDGER_PENALTY.labels('ledger_penalties', 'total', miner_name).set(total_penalty_val)
 
     elif len(line) == 0:
       # empty lines are fine
@@ -277,7 +276,7 @@ def collect_ledger_validators(docker_container, hotspot_name_str):
       print(f"failed to grok line: {c}; section count: {len(c)}")
 
 
-def collect_miner_version(docker_container):
+def collect_miner_version(docker_container, miner_name):
   out = docker_container.exec_run('miner versions')
   results = out.output.decode('utf-8').split("\n")
   # sample output
@@ -288,7 +287,7 @@ def collect_miner_version(docker_container):
     if m := re.match('^\*\s+([\d\.]+)(.*)', line):
       miner_version = m.group(1)
       print(f"found miner version: {miner_version}")
-      VALIDATOR_VERSION.info({'version': miner_version})
+      VALIDATOR_VERSION.labels(miner_name).info({'version': miner_version})
 
 
 if __name__ == '__main__':
