@@ -11,6 +11,13 @@ import docker
 import sys
 import os
 import re
+import logging
+
+
+# remember, levels: debug, info, warning, error, critical. there is no trace.
+logging.basicConfig(format="%(filename)s:%(funcName)s:%(lineno)d:%(levelname)s\t%(message)s", level=logging.WARNING)
+log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)
 
 # time to sleep between scrapes
 UPDATE_PERIOD = int(os.environ.get('UPDATE_PERIOD', 30))
@@ -89,17 +96,17 @@ def get_facts(docker_container_obj):
   # {onboarding_key,"1YBkf..."}.
   # {animal_name,"one-two-three"}.
 
-  print(out.output)
+  log.debug(out.output)
   printkeys = {}
   for line in out.output.split(b"\n"):
     strline = line.decode('utf-8')
 
     # := requires py3.8
     if m := re.match(r'{([^,]+),"([^"]+)"}.', strline):
-      print(m)
+      log.debug(m)
       k = m.group(1)
       v = m.group(2)
-      print(k,v)
+      log.debug(k,v)
       printkeys[k] = v
 
   if v := printkeys.get('pubkey'):
@@ -134,14 +141,14 @@ def stats():
 def get_miner_name(docker_container):
   # need to fix this. hotspot name really should only be queried once
   out = docker_container.exec_run('miner info name')
-  print(out.output)
+  log.debug(out.output)
   hotspot_name = out.output.decode('utf-8').rstrip("\n")
   return hotspot_name
 
 def collect_miner_height(docker_container, miner_name):
   # grab the local blockchain height
   out = docker_container.exec_run('miner info height')
-  print(out.output)
+  log.debug(out.output)
   txt = out.output.decode('utf-8').rstrip("\n")
   VAL.labels('Height', miner_name).set(out.output.split()[1])
 
@@ -152,7 +159,7 @@ def collect_in_consensus(docker_container, miner_name):
   incon = 0
   if incon_txt == 'true':
     incon = 1
-  print(f"in consensus? {incon} / {incon_txt}")
+  log.info(f"in consensus? {incon} / {incon_txt}")
   INCON.labels(miner_name).set(incon)
 
 def collect_block_age(docker_container, miner_name):
@@ -162,7 +169,7 @@ def collect_block_age(docker_container, miner_name):
   age_val = try_int(out.output.decode('utf-8').rstrip("\n"))
 
   BLOCKAGE.labels('BlockAge', miner_name).set(age_val)
-  print(f"age: {age_val}")
+  log.debug(f"age: {age_val}")
 
 def collect_hbbft_performance(docker_container, miner_name):
   # parse the hbbft performance table for the penalty field
@@ -175,7 +182,7 @@ def collect_hbbft_performance(docker_container, miner_name):
     # curly-peach-owl,11/11,368/368,0,0,1.86
 
     if len(c) == 6 and miner_name == c[0]:
-      print(f"resl: {c}; {miner_name}/{c[0]}")
+      log.debug(f"resl: {c}; {miner_name}/{c[0]}")
       (bba_votes,bba_tot)=c[1].split("/")
       (seen_votes,seen_tot)=c[2].split("/")
       bba_last_val=try_float(c[3])
@@ -188,13 +195,13 @@ def collect_hbbft_performance(docker_container, miner_name):
       SEEN_VOTES.labels('Seen_Votes', miner_name).set(seen_votes)
       BBA_LAST.labels('BBA_Last', miner_name).set(bba_last_val)
       SEEN_LAST.labels('Seen_Last', miner_name).set(seen_last_val)
-      print(f"pen: {pen_val}")
-      print(f"bba completions: {bba_votes}")
-      print(f"bba total: {bba_tot}")
-      print(f"bba last: {bba_last_val}")
-      print(f"seen votes: {seen_votes}")
-      print(f"seen total: {seen_tot}")
-      print(f"seen last: {seen_last_val}")
+      log.debug(f"pen: {pen_val}")
+      log.debug(f"bba completions: {bba_votes}")
+      log.debug(f"bba total: {bba_tot}")
+      log.debug(f"bba last: {bba_last_val}")
+      log.debug(f"seen votes: {seen_votes}")
+      log.debug(f"seen total: {seen_tot}")
+      log.debug(f"seen last: {seen_last_val}")
     elif len(c) == 6:
       # not our line
       pass
@@ -202,7 +209,7 @@ def collect_hbbft_performance(docker_container, miner_name):
       # empty line
       pass
     else:
-      print(f"wrong len ({len(c)}) for hbbft: {c}")
+      log.debug(f"wrong len ({len(c)}) for hbbft: {c}")
 
 def collect_peer_book(docker_container, miner_name):
   # peer book -s output
@@ -221,7 +228,7 @@ def collect_peer_book(docker_container, miner_name):
   for line in out.output.decode('utf-8').split("\r\n"):
     c = line.split(',')
     if len(c) == 6:
-      print(f"peerbook entry6: {c}")
+      log.debug(f"peerbook entry6: {c}")
       (address,peer_name,listen_add,connections,nat,last_update) = c
       conns_num = try_int(connections)
 
@@ -230,17 +237,17 @@ def collect_peer_book(docker_container, miner_name):
 
     elif len(c) == 4:
       # local,remote,p2p,name
-      print(f"peerbook entry4: {c}")
+      log.debug(f"peerbook entry4: {c}")
       if c[0] != 'local':
         sessions += 1
     elif len(c) == 1:
-      print(f"peerbook entry1: {c}")
+      log.debug(f"peerbook entry1: {c}")
       # listen_addrs
       pass
     else:
-      print(f"could not understand peer book line: {c}")
+      log.warning(f"could not understand peer book line: {c}")
 
-  print(f"sess: {sessions}")
+  log.debug(f"sess: {sessions}")
   SESSIONS.labels('sessions', miner_name).set(sessions)
 
 def collect_ledger_validators(docker_container, miner_name):
@@ -258,7 +265,7 @@ def collect_ledger_validators(docker_container, miner_name):
 
       (val_name,address,last_heard,stake,status,version,tenure_penalty,dkg_penalty,performance_penalty,total_penalty) = c
       if miner_name == val_name:
-        print(f"have pen line: {c}")
+        log.debug(f"have pen line: {c}")
         tenure_penalty_val = try_float(tenure_penalty)
         dkg_penalty_val = try_float(dkg_penalty)
         performance_penalty_val = try_float(performance_penalty)
@@ -273,7 +280,7 @@ def collect_ledger_validators(docker_container, miner_name):
       # empty lines are fine
       pass
     else:
-      print(f"failed to grok line: {c}; section count: {len(c)}")
+      log.warning(f"failed to grok line: {c}; section count: {len(c)}")
 
 
 def collect_miner_version(docker_container, miner_name):
@@ -286,17 +293,18 @@ def collect_miner_version(docker_container, miner_name):
   for line in results:
     if m := re.match('^\*\s+([\d\.]+)(.*)', line):
       miner_version = m.group(1)
-      print(f"found miner version: {miner_version}")
+      log.info(f"found miner version: {miner_version}")
       VALIDATOR_VERSION.labels(miner_name).info({'version': miner_version})
 
 
 if __name__ == '__main__':
   prometheus_client.start_http_server(8000)
   while True:
+    #log.warning("starting loop.")
     try:
       stats()
     except ValueError as ex:
-      print(f"stats loop failed, {type(ex)}: {ex}")
+      log.error(f"stats loop failed, {type(ex)}: {ex}")
 
     # sleep 30 seconds
     time.sleep(UPDATE_PERIOD)
