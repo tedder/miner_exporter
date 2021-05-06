@@ -3,13 +3,15 @@ Prometheus exporter for the [Helium miner (validator)](https://github.com/helium
 
 This is only the exporter, which still requires a **prometheus server** for data and **grafana** for the dashboard. Prometheus and Grafana servers can run on an external machine, the same machine as the miner, or possibly using a cloud service. The [helium\_miner\_grafana\_dashboard](https://github.com/tedder/helium_miner_grafana_dashboard) can be imported to Grafana.
 
+Note [port 9825 is the 'reserved' port for this specific exporter](https://github.com/prometheus/prometheus/wiki/Default-port-allocations). Feel free to use whatever you like, of course, but you won't be able to dial 9VAL on your phone.
+
 
 ## Running via Docker
-Using the docker file, you can run this with Docker or docker-compose! Both of these expose Prometheus on 9152, feel free to choose your own port. The images are hosted on both [GHCR](https://github.com/users/tedder/packages/container/package/miner_exporter) and [Dockerhub](https://hub.docker.com/r/tedder42/miner_exporter).
+Using the docker file, you can run this with Docker or docker-compose! Both of these expose Prometheus on 9825, feel free to choose your own port. The images are hosted on both [GHCR](https://github.com/users/tedder/packages/container/package/miner_exporter) and [Dockerhub](https://hub.docker.com/r/tedder42/miner_exporter).
 
 ### Docker client
 ```
-docker run -p 9152:8000 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/tedder/miner_exporter:latest
+docker run -p 9825:9825 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/tedder/miner_exporter:latest
 ```
 
 ### Docker-Compose
@@ -27,7 +29,7 @@ services:
     volumes:
     - /var/run/docker.sock:/var/run/docker.sock
     ports:
-    - "9152:8000"
+    - "9825:9825"
 ```
 
 ## Running locally

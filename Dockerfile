@@ -1,6 +1,7 @@
 FROM python:3-buster
 LABEL org.opencontainers.image.source https://github.com/tedder/miner_exporter
 ENV PYTHONUNBUFFERED=1
+EXPOSE 9825
 
 #RUN apt update && apt install -y vim
 COPY requirements.txt /opt/app/

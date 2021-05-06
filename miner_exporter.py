@@ -298,7 +298,7 @@ def collect_miner_version(docker_container, miner_name):
 
 
 if __name__ == '__main__':
-  prometheus_client.start_http_server(8000)
+  prometheus_client.start_http_server(9825) # 9-VAL on your phone
   while True:
     #log.warning("starting loop.")
     try:
