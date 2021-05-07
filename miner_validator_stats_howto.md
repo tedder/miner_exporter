@@ -9,3 +9,10 @@
 
 ## Grafana+InfluxDB+Telegraf
 1. TODO.
+
+## Quick info in your shell
+Assuming you are running your validator in docker and it is named 'validator', run the following. It will update every minute. There's one part you need to update- where it says `MINER_NAME_HERE`. Put your miner name (three-word-phrase) there. If it doesn't appear, try just a few characters, as it gets chopped off in the output.
+```
+watch -n60 'echo -n "miner addr:   "; docker exec validator miner peer addr | cut -d/ -f 3; echo -n "in consensus? "; docker exec validator miner info in_consensus; docker exec validator miner info p2p_status; docker exec validator miner ledger validators -v | egrep -i "MINER_NAME_HERE|owner_address"; docker exec validator miner peer book -s'
+```
+
