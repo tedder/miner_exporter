@@ -9,6 +9,7 @@
 
 ## Grafana+InfluxDB+Telegraf
 1. TODO.
+2. Use [kylemanna's influx bridge](https://github.com/kylemanna/helium-validator-influx).
 
 ## Quick info in your shell
 Assuming you are running your validator in docker and it is named 'validator', run the following. It will update every minute. There's one part you need to update- where it says `MINER_NAME_HERE`. Put your miner name (three-word-phrase) there. If it doesn't appear, try just a few characters, as it gets chopped off in the output.
