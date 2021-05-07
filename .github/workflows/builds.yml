@@ -3,6 +3,8 @@ name: Docker Builds
 on:
   push:
     branches: main
+    paths-ignore:
+    - '*.md'
 
 jobs:
   build:
