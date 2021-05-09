@@ -12,7 +12,7 @@ import sys
 import os
 import re
 import logging
-
+import requests
 
 # remember, levels: debug, info, warning, error, critical. there is no trace.
 logging.basicConfig(format="%(filename)s:%(funcName)s:%(lineno)d:%(levelname)s\t%(message)s", level=logging.WARNING)
@@ -24,40 +24,22 @@ UPDATE_PERIOD = int(os.environ.get('UPDATE_PERIOD', 30))
 VALIDATOR_CONTAINER_NAME = os.environ.get('VALIDATOR_CONTAINER_NAME', 'validator')
 
 # prometheus exporter types Gauge,Counter,Summary,Histogram,Info and Enum
+SCRAPE_TIME = prometheus_client.Summary('validator_scrape_time', 'Time spent collecting miner data')
 SYSTEM_USAGE = prometheus_client.Gauge('system_usage',
                                        'Hold current system resource usage',
                                        ['resource_type','validator_name'])
 VAL = prometheus_client.Gauge('validator_height',
                               'Height of the blockchain',
                               ['resource_type','validator_name'])
-
 INCON = prometheus_client.Gauge('validator_inconsensus',
                               'Is validator currently in consensus group',
                               ['validator_name'])
 BLOCKAGE = prometheus_client.Gauge('validator_block_age',
                               'Age of the current block',
                              ['resource_type','validator_name'])
-PENALTY = prometheus_client.Gauge('validator_hbbft_penalty',
-                              'HBBFT Penalty metric from perf, only applies when in CG',
-                             ['resource_type','validator_name'])
-BBA_VOTES = prometheus_client.Gauge('validator_hbbft_bba_votes',
-                              'HBBFT bba completions metric from perf, only applies when in CG',
-                             ['resource_type','validator_name'])
-BBA_TOTAL = prometheus_client.Gauge('validator_hbbft_bba_total',
-                              'HBBFT bba total completions metric from perf, only applies when in CG',
-                             ['resource_type','validator_name'])
-SEEN_VOTES = prometheus_client.Gauge('validator_hbbft_seen_votes',
-                              'HBBFT seen votes metric from perf, only applies when in CG',
-                             ['resource_type','validator_name'])
-SEEN_TOTAL = prometheus_client.Gauge('validator_hbbft_seen_total',
-                              'HBBFT seen total metric from perf, only applies when in CG',
-                             ['resource_type','validator_name'])
-BBA_LAST = prometheus_client.Gauge('validator_hbbft_bba_last',
-                              'HBBFT last bba from perf, only applies when in CG',
-                             ['resource_type','validator_name'])
-SEEN_LAST = prometheus_client.Gauge('validator_hbbft_seen_last',
-                              'HBBFT last seen from perf, only applies when in CG',
-                             ['resource_type','validator_name'])
+HBBFT_PERF = prometheus_client.Gauge('validator_hbbft_perf',
+                              'HBBFT performance metrics from perf, only applies when in CG',
+                             ['resource_type','subtype','validator_name'])
 CONNECTIONS = prometheus_client.Gauge('validator_connections',
                               'Number of libp2p connections ',
                              ['resource_type','validator_name'])
@@ -69,7 +51,8 @@ LEDGER_PENALTY = prometheus_client.Gauge('validator_ledger',
                              ['resource_type', 'subtype','validator_name'])
 VALIDATOR_VERSION = prometheus_client.Info('validator_version',
                               'Version number of the miner container',['validator_name'])
-
+BALANCE = prometheus_client.Gauge('validator_api_balance',
+                              'Balance of the validator owner account',['validator_name'])
 miner_facts = {}
 
 def try_int(v):
@@ -81,7 +64,6 @@ def try_float(v):
   if re.match(r"^\-?[\d\.]+$", v):
     return float(v)
   return v
-
 
 def get_facts(docker_container_obj):
   if miner_facts:
@@ -117,7 +99,8 @@ def get_facts(docker_container_obj):
   return miner_facts
 
 
-
+# Decorate function with metric.
+@SCRAPE_TIME.time()
 def stats():
   dc = docker.DockerClient()
   docker_container = dc.containers.get(VALIDATOR_CONTAINER_NAME)
@@ -129,7 +112,6 @@ def stats():
   SYSTEM_USAGE.labels('CPU', hotspot_name_str).set(psutil.cpu_percent())
   SYSTEM_USAGE.labels('Memory', hotspot_name_str).set(psutil.virtual_memory()[2])
 
-
   collect_miner_version(docker_container, hotspot_name_str)
   collect_block_age(docker_container, hotspot_name_str)
   collect_miner_height(docker_container, hotspot_name_str)
@@ -137,7 +119,26 @@ def stats():
   collect_ledger_validators(docker_container, hotspot_name_str)
   collect_peer_book(docker_container, hotspot_name_str)
   collect_hbbft_performance(docker_container, hotspot_name_str)
+  collect_balance(docker_container,miner_facts['address'],hotspot_name_str)
+  
+def collect_balance(docker_container, addr, miner_name):
+  # should move pubkey to getfacts and then pass it in here
+  #out = docker_container.exec_run('miner print_keys')
+  #for line in out.output.decode('utf-8').split("\n"):
+  #  if 'pubkey' in line:
+  #    addr=line[9:60]
+  url = "https://testnet-api.helium.wtf/v1/validators/" +str(addr)
+  api_validators=requests.get(url=url).json()
+  owner = api_validators['data']['owner']
+      
+  url = 'https://testnet-api.helium.wtf/v1/accounts/' +str(owner)
+  api_accounts = requests.get(url=url).json()
+  balance = float(api_accounts['data']['balance'])/1E8
+  #print(api_accounts)
+  #print('balance',balance)
+  BALANCE.labels(miner_name).set(balance)
 
+    
 def get_miner_name(docker_container):
   # need to fix this. hotspot name really should only be queried once
   out = docker_container.exec_run('miner info name')
@@ -188,13 +189,14 @@ def collect_hbbft_performance(docker_container, miner_name):
       bba_last_val=try_float(c[3])
       seen_last_val=try_float(c[4])
       pen_val = try_float(c[5])
-      PENALTY.labels('Penalty', miner_name).set(pen_val)
-      BBA_TOTAL.labels('BBA_Total', miner_name).set(bba_tot)
-      BBA_VOTES.labels('BBA_Votes', miner_name).set(bba_votes)
-      SEEN_TOTAL.labels('Seen_Total', miner_name).set(seen_tot)
-      SEEN_VOTES.labels('Seen_Votes', miner_name).set(seen_votes)
-      BBA_LAST.labels('BBA_Last', miner_name).set(bba_last_val)
-      SEEN_LAST.labels('Seen_Last', miner_name).set(seen_last_val)
+      
+      HBBFT_PERF.labels('hbbft_perf','Penalty', miner_name).set(pen_val)
+      HBBFT_PERF.labels('hbbft_perf','BBA_Total', miner_name).set(bba_tot)
+      HBBFT_PERF.labels('hbbft_perf','BBA_Votes', miner_name).set(bba_votes)
+      HBBFT_PERF.labels('hbbft_perf','Seen_Total', miner_name).set(seen_tot)
+      HBBFT_PERF.labels('hbbft_perf','Seen_Votes', miner_name).set(seen_votes)
+      HBBFT_PERF.labels('hbbft_perf','BBA_Last', miner_name).set(bba_last_val)
+      HBBFT_PERF.labels('hbbft_perf','Seen_Last', miner_name).set(seen_last_val)
       log.debug(f"pen: {pen_val}")
       log.debug(f"bba completions: {bba_votes}")
       log.debug(f"bba total: {bba_tot}")
