@@ -120,6 +120,20 @@ def stats():
   collect_peer_book(docker_container, hotspot_name_str)
   collect_hbbft_performance(docker_container, hotspot_name_str)
   collect_balance(docker_container,miner_facts['address'],hotspot_name_str)
+
+def safe_get_json(url):
+  try:
+    ret = requests.get(url)
+    if not ret.status_code == requests.codes.ok:
+      log.error(f"bad status code ({ret.status_code}) from url: {url}")
+      return
+    retj = ret.json()
+    return retj
+
+
+  except requests.exceptions.SSLError as ex:
+    log.error(f"error fetching {url}: {ex}")
+    return
   
 def collect_balance(docker_container, addr, miner_name):
   # should move pubkey to getfacts and then pass it in here
@@ -127,12 +141,14 @@ def collect_balance(docker_container, addr, miner_name):
   #for line in out.output.decode('utf-8').split("\n"):
   #  if 'pubkey' in line:
   #    addr=line[9:60]
-  url = "https://testnet-api.helium.wtf/v1/validators/" +str(addr)
-  api_validators=requests.get(url=url).json()
+  api_validators = safe_get_json(f'https://testnet-api.helium.wtf/v1/validators/{addr}')
+  if not api_validators.get('data') or not api_validators['data'].get('owner'):
+    return
   owner = api_validators['data']['owner']
-      
-  url = 'https://testnet-api.helium.wtf/v1/accounts/' +str(owner)
-  api_accounts = requests.get(url=url).json()
+
+  api_accounts = safe_get_json(f'https://testnet-api.helium.wtf/v1/accounts/{owner}')
+  if not api_accounts.get('data') or not api_accounts['data'].get('balance'):
+    return
   balance = float(api_accounts['data']['balance'])/1E8
   #print(api_accounts)
   #print('balance',balance)
