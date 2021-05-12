@@ -135,7 +135,7 @@ def safe_get_json(url):
     return retj
 
 
-  except requests.exceptions.SSLError as ex:
+  except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as ex:
     log.error(f"error fetching {url}: {ex}")
     return
   
