@@ -102,10 +102,14 @@ def get_facts(docker_container_obj):
 # Decorate function with metric.
 @SCRAPE_TIME.time()
 def stats():
-  dc = docker.DockerClient()
-  docker_container = dc.containers.get(VALIDATOR_CONTAINER_NAME)
-  miner_facts = get_facts(docker_container)
-  hotspot_name_str = get_miner_name(docker_container)
+  try:
+    dc = docker.DockerClient()
+    docker_container = dc.containers.get(VALIDATOR_CONTAINER_NAME)
+    miner_facts = get_facts(docker_container)
+    hotspot_name_str = get_miner_name(docker_container)
+  except docker.errors.NotFound as ex:
+    log.error(f"docker failed while bootstrapping. Not exporting anything. Error: {ex}")
+    return
 
   # collect total cpu and memory usage. Might want to consider just the docker
   # container with something like cadvisor instead
