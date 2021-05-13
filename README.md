@@ -11,7 +11,7 @@ Using the docker file, you can run this with Docker or docker-compose! Both of t
 
 ### Docker client
 ```
-docker run -p 9825:9825 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/tedder/miner_exporter:latest
+docker run -p 9825:9825 --name miner_exporter -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/tedder/miner_exporter:latest
 ```
 
 ### Docker-Compose
