@@ -1,3 +1,5 @@
 prometheus_client
 psutil
 docker
+python-dateutil
+requests

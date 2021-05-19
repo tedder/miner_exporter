@@ -3,16 +3,18 @@
 # external packages
 import prometheus_client
 import psutil
+import docker
+import requests
+import dateutil.parser
 
 # internal packages
+import datetime
 import time
 import subprocess
-import docker
 import sys
 import os
 import re
 import logging
-import requests
 
 # remember, levels: debug, info, warning, error, critical. there is no trace.
 logging.basicConfig(format="%(filename)s:%(funcName)s:%(lineno)d:%(levelname)s\t%(message)s", level=logging.WARNING)
@@ -53,6 +55,9 @@ VALIDATOR_VERSION = prometheus_client.Info('validator_version',
                               'Version number of the miner container',['validator_name'])
 BALANCE = prometheus_client.Gauge('validator_api_balance',
                               'Balance of the validator owner account',['validator_name'])
+UPTIME = prometheus_client.Gauge('validator_container_uptime',
+                              'Time container has been at a given state',
+                              ['state_type','validator_name'])
 miner_facts = {}
 
 def try_int(v):
@@ -116,6 +121,7 @@ def stats():
   SYSTEM_USAGE.labels('CPU', hotspot_name_str).set(psutil.cpu_percent())
   SYSTEM_USAGE.labels('Memory', hotspot_name_str).set(psutil.virtual_memory()[2])
 
+  collect_container_run_time(docker_container, hotspot_name_str)
   collect_miner_version(docker_container, hotspot_name_str)
   collect_block_age(docker_container, hotspot_name_str)
   collect_miner_height(docker_container, hotspot_name_str)
@@ -138,7 +144,39 @@ def safe_get_json(url):
   except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as ex:
     log.error(f"error fetching {url}: {ex}")
     return
-  
+
+def collect_container_run_time(docker_container, miner_name):
+  attrs = docker_container.attrs
+
+  # examples and other things we could track:
+  # "Created": "2021-05-18T22:11:48.962678927Z",
+  # "Id": "cd611b83a0f267a1000603db52aa2d21247a32cc195c9c2b8ebcade5d35cfe1a",
+  # "State": {
+  #   "Status": "running",
+  #   "Running": true,
+  #   "Paused": false,
+  #   "Restarting": false,
+  #   "OOMKilled": false,
+  #   "Dead": false,
+  #   "Pid": 4159823,
+  #   "ExitCode": 0,
+  #   "Error": "",
+  #   "StartedAt": "2021-05-18T22:11:49.50436001Z",
+  #   "FinishedAt": "0001-01-01T00:00:00Z"
+
+  now = datetime.datetime.now(datetime.timezone.utc)
+  if attrs:
+    if attrs.get("Created"):
+      create_time = attrs.get("Created")
+      create_dt = dateutil.parser.parse(create_time)
+      create_delta = (now-create_dt).total_seconds()
+      UPTIME.labels('create', miner_name).set(create_delta)
+    if attrs.get("State") and attrs["State"].get("StartedAt"):
+      start_time = attrs["State"]["StartedAt"]
+      start_dt = dateutil.parser.parse(start_time)
+      start_delta = (now-start_dt).total_seconds()
+      UPTIME.labels('start', miner_name).set(start_delta)
+
 def collect_balance(docker_container, addr, miner_name):
   # should move pubkey to getfacts and then pass it in here
   #out = docker_container.exec_run('miner print_keys')
