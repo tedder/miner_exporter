@@ -187,13 +187,13 @@ def collect_balance(docker_container, addr, miner_name):
   if not api_validators:
     log.error("validator fetch returned empty JSON")
     return
-  elif not api_validators.get('data') and not api_validators['data'].get('owner'):
+  elif not api_validators.get('data') or not api_validators['data'].get('owner'):
     log.error("could not find validator data owner in json")
     return
   owner = api_validators['data']['owner']
 
   api_accounts = safe_get_json(f'https://testnet-api.helium.wtf/v1/accounts/{owner}')
-  if not api_accounts.get('data') and not api_accounts['data'].get('balance'):
+  if not api_accounts.get('data') or not api_accounts['data'].get('balance'):
     return
   balance = float(api_accounts['data']['balance'])/1E8
   #print(api_accounts)
