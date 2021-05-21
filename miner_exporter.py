@@ -261,7 +261,7 @@ def collect_hbbft_performance(docker_container, miner_name):
       HBBFT_PERF.labels('hbbft_perf','Seen_Votes', miner_name).set(seen_votes)
       HBBFT_PERF.labels('hbbft_perf','BBA_Last', miner_name).set(bba_last_val)
       HBBFT_PERF.labels('hbbft_perf','Seen_Last', miner_name).set(seen_last_val)
-      log.debug(f"pen: {pen_val}")
+      log.info(f"penalty: {pen_val}")
       log.debug(f"bba completions: {bba_votes}")
       log.debug(f"bba total: {bba_tot}")
       log.debug(f"bba last: {bba_last_val}")
@@ -337,6 +337,7 @@ def collect_ledger_validators(docker_container, miner_name):
         performance_penalty_val = try_float(performance_penalty)
         total_penalty_val = try_float(total_penalty)
 
+        log.info(f"L penalty: {total_penalty_val}")
         LEDGER_PENALTY.labels('ledger_penalties', 'tenure', miner_name).set(tenure_penalty_val)
         LEDGER_PENALTY.labels('ledger_penalties', 'dkg', miner_name).set(dkg_penalty_val)
         LEDGER_PENALTY.labels('ledger_penalties', 'performance', miner_name).set(performance_penalty_val)
