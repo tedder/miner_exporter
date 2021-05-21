@@ -371,7 +371,10 @@ if __name__ == '__main__':
     try:
       stats()
     except ValueError as ex:
-      log.error(f"stats loop failed, {type(ex)}: {ex}")
+      log.error(f"stats loop failed.", exc_info=ex)
+    except docker.errors.APIError as ex:
+      log.error(f"stats loop failed with a docker error.", exc_info=ex)
+
 
     # sleep 30 seconds
     time.sleep(UPDATE_PERIOD)
