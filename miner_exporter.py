@@ -343,7 +343,7 @@ def collect_ledger_validators(docker_container, miner_name):
         LEDGER_PENALTY.labels('ledger_penalties', 'dkg', miner_name).set(dkg_penalty_val)
         LEDGER_PENALTY.labels('ledger_penalties', 'performance', miner_name).set(performance_penalty_val)
         LEDGER_PENALTY.labels('ledger_penalties', 'total', miner_name).set(total_penalty_val)
-        LEDGER_PENALTY.labels('ledger_penalties', 'last_heartbeat', miner_name).set(last_heartbeat)
+        BLOCKAGE.labels('last_heartbeat', miner_name).set(last_heartbeat)
 
     elif len(line) == 0:
       # empty lines are fine
