@@ -329,19 +329,21 @@ def collect_ledger_validators(docker_container, miner_name):
         # header line
         continue
 
-      (val_name,address,last_heard,stake,status,version,tenure_penalty,dkg_penalty,performance_penalty,total_penalty) = c
+      (val_name,address,last_heartbeat,stake,status,version,tenure_penalty,dkg_penalty,performance_penalty,total_penalty) = c
       if miner_name == val_name:
         log.debug(f"have pen line: {c}")
         tenure_penalty_val = try_float(tenure_penalty)
         dkg_penalty_val = try_float(dkg_penalty)
         performance_penalty_val = try_float(performance_penalty)
         total_penalty_val = try_float(total_penalty)
+        least_heartbeat=try_float(last_heartbeat)
 
         log.info(f"L penalty: {total_penalty_val}")
         LEDGER_PENALTY.labels('ledger_penalties', 'tenure', miner_name).set(tenure_penalty_val)
         LEDGER_PENALTY.labels('ledger_penalties', 'dkg', miner_name).set(dkg_penalty_val)
         LEDGER_PENALTY.labels('ledger_penalties', 'performance', miner_name).set(performance_penalty_val)
         LEDGER_PENALTY.labels('ledger_penalties', 'total', miner_name).set(total_penalty_val)
+        LEDGER_PENALTY.labels('ledger_penalties', 'last_heartbeat', miner_name).set(last_heartbeat)
 
     elif len(line) == 0:
       # empty lines are fine
