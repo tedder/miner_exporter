@@ -16,10 +16,11 @@ import os
 import re
 import logging
 
+
 # remember, levels: debug, info, warning, error, critical. there is no trace.
 logging.basicConfig(format="%(filename)s:%(funcName)s:%(lineno)d:%(levelname)s\t%(message)s", level=logging.WARNING)
 log = logging.getLogger(__name__)
-log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 
 # time to sleep between scrapes
 UPDATE_PERIOD = int(os.environ.get('UPDATE_PERIOD', 30))
@@ -30,7 +31,7 @@ SCRAPE_TIME = prometheus_client.Summary('validator_scrape_time', 'Time spent col
 SYSTEM_USAGE = prometheus_client.Gauge('system_usage',
                                        'Hold current system resource usage',
                                        ['resource_type','validator_name'])
-VAL = prometheus_client.Gauge('validator_height',
+HEIGHT = prometheus_client.Gauge('validator_height',
                               'Height of the blockchain',
                               ['resource_type','validator_name'])
 INCON = prometheus_client.Gauge('validator_inconsensus',
@@ -58,6 +59,29 @@ BALANCE = prometheus_client.Gauge('validator_api_balance',
 UPTIME = prometheus_client.Gauge('validator_container_uptime',
                               'Time container has been at a given state',
                               ['state_type','validator_name'])
+
+class validator:
+    def __init__(self,host,port):
+        self.session = requests.Session()
+        self.host = 'http://'+host+':'+str(port)
+        self.header = {'Content-type': 'application/json'}
+        self.payload = {"jsonrpc":"2.0",
+                        "id":1,
+                        "method":""}
+        # bug in miner that returns name as bytes. the join can eventually be removed
+        self.name = ''.join(map(chr,self.get('info_name')['name']))
+        log.info(f"Name {self.name}")
+
+    def get(self,cmd):
+        self.payload["method"]=cmd
+        try:
+            response=self.session.post(self.host, json=self.payload, headers=self.header).json()['result']
+        except KeyError:
+            response=self.session.post(self.host, json=self.payload, headers=self.header).json()
+        log.debug(f"response {response}")
+        return(response) 
+
+
 miner_facts = {}
 
 def try_int(v):
@@ -106,12 +130,12 @@ def get_facts(docker_container_obj):
 
 # Decorate function with metric.
 @SCRAPE_TIME.time()
-def stats():
+def stats(validator):
   try:
     dc = docker.DockerClient()
     docker_container = dc.containers.get(VALIDATOR_CONTAINER_NAME)
     miner_facts = get_facts(docker_container)
-    hotspot_name_str = get_miner_name(docker_container)
+    hotspot_name_str = validator.name
   except docker.errors.NotFound as ex:
     log.error(f"docker failed while bootstrapping. Not exporting anything. Error: {ex}")
     return
@@ -124,8 +148,8 @@ def stats():
   collect_container_run_time(docker_container, hotspot_name_str)
   collect_miner_version(docker_container, hotspot_name_str)
   collect_block_age(docker_container, hotspot_name_str)
-  collect_miner_height(docker_container, hotspot_name_str)
-  collect_in_consensus(docker_container, hotspot_name_str)
+  collect_miner_height(validator)
+  collect_in_consensus(validator)
   collect_ledger_validators(docker_container, hotspot_name_str)
   collect_peer_book(docker_container, hotspot_name_str)
   collect_hbbft_performance(docker_container, hotspot_name_str)
@@ -202,30 +226,29 @@ def collect_balance(docker_container, addr, miner_name):
   #print('balance',balance)
   BALANCE.labels(miner_name).set(balance)
 
-    
-def get_miner_name(docker_container):
-  # need to fix this. hotspot name really should only be queried once
-  out = docker_container.exec_run('miner info name')
-  log.debug(out.output)
-  hotspot_name = out.output.decode('utf-8').rstrip("\n")
-  return hotspot_name
 
-def collect_miner_height(docker_container, miner_name):
+def collect_miner_height(validator):
   # grab the local blockchain height
-  out = docker_container.exec_run('miner info height')
-  log.debug(out.output)
-  txt = out.output.decode('utf-8').rstrip("\n")
-  VAL.labels('Height', miner_name).set(out.output.split()[1])
+  #out = docker_container.exec_run('miner info height')
+  out = validator.get('info_height')
+  
+  log.info(f"Epoch {out['epoch']}")
+  log.info(f"Height {out['height']}")
+  
+  HEIGHT.labels('Height', validator.name).set(out['height'])
+  HEIGHT.labels('Epoch', validator.name).set(out['epoch'])
 
-def collect_in_consensus(docker_container, miner_name):
+
+def collect_in_consensus(validator):
   # check if currently in consensus group
-  out = docker_container.exec_run('miner info in_consensus')
-  incon_txt = out.output.decode('utf-8').rstrip("\n")
+  out = validator.get('info_in_consensus')
+
+  incon_txt = out['in_consensus']
   incon = 0
   if incon_txt == 'true':
     incon = 1
   log.info(f"in consensus? {incon} / {incon_txt}")
-  INCON.labels(miner_name).set(incon)
+  INCON.labels(validator.name).set(incon)
 
 def collect_block_age(docker_container, miner_name):
   # collect current block age
@@ -243,16 +266,17 @@ def collect_hbbft_performance(docker_container, miner_name):
   for line in out.output.decode('utf-8').split("\n"):
     c = [x.strip() for x in line.split(',')]
     # samples:
-    # name,bba_completions,seen_votes,last_bba,last_seen,penalty
-    # curly-peach-owl,11/11,368/368,0,0,1.86
+    # name,bba_completions,seen_votes,last_bba,last_seen,tenure,penalty
+    # great-clear-chinchilla,5/5,237/237,0,0,2.91,2.91
 
-    if len(c) == 6 and miner_name == c[0]:
+    if len(c) == 7 and miner_name == c[0]:
       log.debug(f"resl: {c}; {miner_name}/{c[0]}")
       (bba_votes,bba_tot)=c[1].split("/")
       (seen_votes,seen_tot)=c[2].split("/")
       bba_last_val=try_float(c[3])
       seen_last_val=try_float(c[4])
-      pen_val = try_float(c[5])
+      tenure = try_float(c[5])
+      pen_val = try_float(c[6])
       
       HBBFT_PERF.labels('hbbft_perf','Penalty', miner_name).set(pen_val)
       HBBFT_PERF.labels('hbbft_perf','BBA_Total', miner_name).set(bba_tot)
@@ -261,6 +285,7 @@ def collect_hbbft_performance(docker_container, miner_name):
       HBBFT_PERF.labels('hbbft_perf','Seen_Votes', miner_name).set(seen_votes)
       HBBFT_PERF.labels('hbbft_perf','BBA_Last', miner_name).set(bba_last_val)
       HBBFT_PERF.labels('hbbft_perf','Seen_Last', miner_name).set(seen_last_val)
+      HBBFT_PERF.labels('hbbft_perf','Tenure', miner_name).set(tenure)
       log.info(f"penalty: {pen_val}")
       log.debug(f"bba completions: {bba_votes}")
       log.debug(f"bba total: {bba_tot}")
@@ -268,7 +293,7 @@ def collect_hbbft_performance(docker_container, miner_name):
       log.debug(f"seen votes: {seen_votes}")
       log.debug(f"seen total: {seen_tot}")
       log.debug(f"seen last: {seen_last_val}")
-    elif len(c) == 6:
+    elif len(c) == 7:
       # not our line
       pass
     elif len(line) == 0:
@@ -368,10 +393,11 @@ def collect_miner_version(docker_container, miner_name):
 
 if __name__ == '__main__':
   prometheus_client.start_http_server(9825) # 9-VAL on your phone
+  v=validator('localhost','4467')
   while True:
     #log.warning("starting loop.")
     try:
-      stats()
+      stats(v)
     except ValueError as ex:
       log.error(f"stats loop failed.", exc_info=ex)
     except docker.errors.APIError as ex:
