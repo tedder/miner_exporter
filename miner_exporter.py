@@ -236,38 +236,41 @@ def collect_block_age(docker_container, miner_name):
   BLOCKAGE.labels('BlockAge', miner_name).set(age_val)
   log.debug(f"age: {age_val}")
 
+# persist these between calls
+hval = {}
 def collect_hbbft_performance(docker_container, miner_name):
   # parse the hbbft performance table for the penalty field
   out = docker_container.exec_run('miner hbbft perf --format csv')
   #print(out.output)
+
   for line in out.output.decode('utf-8').split("\n"):
     c = [x.strip() for x in line.split(',')]
     # samples:
-    # name,bba_completions,seen_votes,last_bba,last_seen,penalty
-    # curly-peach-owl,11/11,368/368,0,0,1.86
 
-    if len(c) == 6 and miner_name == c[0]:
-      log.debug(f"resl: {c}; {miner_name}/{c[0]}")
-      (bba_votes,bba_tot)=c[1].split("/")
-      (seen_votes,seen_tot)=c[2].split("/")
-      bba_last_val=try_float(c[3])
-      seen_last_val=try_float(c[4])
-      pen_val = try_float(c[5])
+    have_data = False
+
+    if len(c) == 7 and miner_name == c[0]:
+      # name,bba_completions,seen_votes,last_bba,last_seen,tenure,penalty
+      # great-clear-chinchilla,5/5,237/237,0,0,2.91,2.91
+      log.debug(f"resl7: {c}; {miner_name}/{c[0]}")
+
+      (hval['bba_votes'],hval['bba_tot'])=c[1].split("/")
+      (hval['seen_votes'],hval['seen_tot'])=c[2].split("/")
+      hval['bba_last_val']=try_float(c[3])
+      hval['seen_last_val']=try_float(c[4])
+      hval['tenure'] = try_float(c[5])
+      hval['pen_val'] = try_float(c[6])
+    elif len(c) == 6 and miner_name == c[0]:
+      # name,bba_completions,seen_votes,last_bba,last_seen,penalty
+      # curly-peach-owl,11/11,368/368,0,0,1.86
+      log.debug(f"resl6: {c}; {miner_name}/{c[0]}")
+
+      (hval['bba_votes'],hval['bba_tot'])=c[1].split("/")
+      (hval['seen_votes'],hval['seen_tot'])=c[2].split("/")
+      hval['bba_last_val']=try_float(c[3])
+      hval['seen_last_val']=try_float(c[4])
+      hval['pen_val'] = try_float(c[5])
       
-      HBBFT_PERF.labels('hbbft_perf','Penalty', miner_name).set(pen_val)
-      HBBFT_PERF.labels('hbbft_perf','BBA_Total', miner_name).set(bba_tot)
-      HBBFT_PERF.labels('hbbft_perf','BBA_Votes', miner_name).set(bba_votes)
-      HBBFT_PERF.labels('hbbft_perf','Seen_Total', miner_name).set(seen_tot)
-      HBBFT_PERF.labels('hbbft_perf','Seen_Votes', miner_name).set(seen_votes)
-      HBBFT_PERF.labels('hbbft_perf','BBA_Last', miner_name).set(bba_last_val)
-      HBBFT_PERF.labels('hbbft_perf','Seen_Last', miner_name).set(seen_last_val)
-      log.info(f"penalty: {pen_val}")
-      log.debug(f"bba completions: {bba_votes}")
-      log.debug(f"bba total: {bba_tot}")
-      log.debug(f"bba last: {bba_last_val}")
-      log.debug(f"seen votes: {seen_votes}")
-      log.debug(f"seen total: {seen_tot}")
-      log.debug(f"seen last: {seen_last_val}")
     elif len(c) == 6:
       # not our line
       pass
@@ -276,6 +279,16 @@ def collect_hbbft_performance(docker_container, miner_name):
       pass
     else:
       log.debug(f"wrong len ({len(c)}) for hbbft: {c}")
+
+    # always set these, that way they get reset when out of CG
+    HBBFT_PERF.labels('hbbft_perf','Penalty', miner_name).set(hval.get('pen_val', 0))
+    HBBFT_PERF.labels('hbbft_perf','BBA_Total', miner_name).set(hval.get('bba_tot', 0))
+    HBBFT_PERF.labels('hbbft_perf','BBA_Votes', miner_name).set(hval.get('bba_votes', 0))
+    HBBFT_PERF.labels('hbbft_perf','Seen_Total', miner_name).set(hval.get('seen_tot', 0))
+    HBBFT_PERF.labels('hbbft_perf','Seen_Votes', miner_name).set(hval.get('seen_votes', 0))
+    HBBFT_PERF.labels('hbbft_perf','BBA_Last', miner_name).set(hval.get('bba_last_val', 0))
+    HBBFT_PERF.labels('hbbft_perf','Seen_Last', miner_name).set(hval.get('seen_last_val', 0))
+    HBBFT_PERF.labels('hbbft_perf','Tenure', miner_name).set(hval.get('tenure', 0))
 
 def collect_peer_book(docker_container, miner_name):
   # peer book -s output
