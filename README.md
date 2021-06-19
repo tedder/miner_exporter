@@ -15,7 +15,7 @@ docker run -p 9825:9825 --name miner_exporter -v /var/run/docker.sock:/var/run/d
 ```
 
 ### Docker-Compose
-Using your existing docker-compose file, add the section for the exporter (below). When you're done, run `docker-compose up -d` as usual. That's it!
+Using your existing docker-compose file, add the section for the exporter (below). When you're done, run `docker-compose up -d` as usual. That's it! Here is the full [docker-compose.yml](docker-compose.yml) example.
 ```
 version: "3"
 services:
