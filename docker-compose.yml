@@ -1,0 +1,33 @@
+# launch: docker-compose up -d
+version: "3.7"
+services:
+  validator:
+    image: quay.io/team-helium/validator:latest-val-amd64
+    container_name: validator
+    init: true
+    ports:
+    - "2154:2154"
+    - "127.0.0.1:4467:4467" # jsonrpc
+    volumes:
+    - "${HOME}/validator_data/:/var/data"
+    labels:
+      "com.centurylinklabs.watchtower.lifecycle.pre-update": >
+        sh -c 'while [ "$$(miner info in_consensus)" == "true" ]; do echo "in consensus, loop-waiting"; sleep 30; done'
+      "com.centurylinklabs.watchtower.lifecycle.pre-update-timeout": 43200 # 12hrs should be longer than a validator is in the consensus group.
+  val_watchtower:
+    image: containrrr/watchtower:latest
+    container_name: val_watchtower
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    command: validator miner_exporter # the container name(s) to monitor
+    environment:
+    - WATCHTOWER_POLL_INTERVAL=21600 # check for new image every 6 hrs
+    - WATCHTOWER_LIFECYCLE_HOOKS=true
+    #- WATCHTOWER_DEBUG=true # uncomment to see watchtower waiting for consensus
+  miner_exporter:
+    image: ghcr.io/tedder/miner_exporter:latest
+    container_name: miner_exporter
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+    - "127.0.0.1:9825:9825"
