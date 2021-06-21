@@ -118,7 +118,6 @@ def stats():
 
     # Try to find by specific name first
     docker_container = dc.containers.get(VALIDATOR_CONTAINER_NAME)
-    
   except docker.errors.NotFound as ex:
     # If find by specifc name fails, try to find by prefix
     containers = dc.containers.list()
