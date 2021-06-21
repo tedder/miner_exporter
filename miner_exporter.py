@@ -25,6 +25,10 @@ log.setLevel(logging.INFO)
 UPDATE_PERIOD = int(os.environ.get('UPDATE_PERIOD', 30))
 VALIDATOR_CONTAINER_NAME = os.environ.get('VALIDATOR_CONTAINER_NAME', 'validator')
 
+# use the RPC calls where available. This means you have your RPC port open.
+# Once all of the exec calls are replaced we can enable this by default.
+ENABLE_RPC = os.environ.get('ENABLE_RPC', 0)
+
 # prometheus exporter types Gauge,Counter,Summary,Histogram,Info and Enum
 SCRAPE_TIME = prometheus_client.Summary('validator_scrape_time', 'Time spent collecting miner data')
 SYSTEM_USAGE = prometheus_client.Gauge('system_usage',
