@@ -36,8 +36,10 @@ SCRAPE_TIME = prometheus_client.Summary('validator_scrape_time', 'Time spent col
 SYSTEM_USAGE = prometheus_client.Gauge('system_usage',
                                        'Hold current system resource usage',
                                        ['resource_type','validator_name'])
+CHAIN_HEIGHT = prometheus_client.Gauge('chain_height',
+                              'Height of the actual blockchain')
 VAL = prometheus_client.Gauge('validator_height',
-                              'Height of the blockchain',
+                              "Height of the validator's blockchain",
                               ['resource_type','validator_name'])
 INCON = prometheus_client.Gauge('validator_inconsensus',
                               'Is validator currently in consensus group',
@@ -147,6 +149,7 @@ def stats():
   collect_miner_version(docker_container, hotspot_name_str)
   collect_block_age(docker_container, hotspot_name_str)
   collect_miner_height(docker_container, hotspot_name_str)
+  collect_chain_height()
   collect_in_consensus(docker_container, hotspot_name_str)
   collect_ledger_validators(docker_container, hotspot_name_str)
   collect_peer_book(docker_container, hotspot_name_str)
@@ -198,6 +201,14 @@ def collect_container_run_time(docker_container, miner_name):
       start_dt = dateutil.parser.parse(start_time)
       start_delta = (now-start_dt).total_seconds()
       UPTIME.labels('start', miner_name).set(start_delta)
+
+def collect_chain_height():
+  api = safe_get_json(f'{API_BASE_URL}/blocks/height')
+  if not api:
+    log.error("chain height fetch returned empty JSON")
+    return
+  height_val = api['data']['height']
+  CHAIN_HEIGHT.set(height_val)
 
 def collect_balance(docker_container, addr, miner_name):
   # should move pubkey to getfacts and then pass it in here
