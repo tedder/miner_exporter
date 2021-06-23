@@ -24,6 +24,8 @@ log.setLevel(logging.INFO)
 # time to sleep between scrapes
 UPDATE_PERIOD = int(os.environ.get('UPDATE_PERIOD', 30))
 VALIDATOR_CONTAINER_NAME = os.environ.get('VALIDATOR_CONTAINER_NAME', 'validator')
+# for testnet, https://testnet-api.helium.wtf/v1
+API_BASE_URL = os.environ.get('API_BASE_URL', 'https://api.helium.io/v1')
 
 # use the RPC calls where available. This means you have your RPC port open.
 # Once all of the exec calls are replaced we can enable this by default.
@@ -203,7 +205,7 @@ def collect_balance(docker_container, addr, miner_name):
   #for line in out.output.decode('utf-8').split("\n"):
   #  if 'pubkey' in line:
   #    addr=line[9:60]
-  api_validators = safe_get_json(f'https://testnet-api.helium.wtf/v1/validators/{addr}')
+  api_validators = safe_get_json(f'${API_BASE_URL}/validators/{addr}')
   if not api_validators:
     log.error("validator fetch returned empty JSON")
     return
@@ -212,7 +214,7 @@ def collect_balance(docker_container, addr, miner_name):
     return
   owner = api_validators['data']['owner']
 
-  api_accounts = safe_get_json(f'https://testnet-api.helium.wtf/v1/accounts/{owner}')
+  api_accounts = safe_get_json(f'${API_BASE_URL}/accounts/{owner}')
   if not api_accounts:
     return
   if not api_accounts.get('data') or not api_accounts['data'].get('balance'):
