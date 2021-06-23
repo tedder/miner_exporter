@@ -205,7 +205,7 @@ def collect_balance(docker_container, addr, miner_name):
   #for line in out.output.decode('utf-8').split("\n"):
   #  if 'pubkey' in line:
   #    addr=line[9:60]
-  api_validators = safe_get_json(f'${API_BASE_URL}/validators/{addr}')
+  api_validators = safe_get_json(f'{API_BASE_URL}/validators/{addr}')
   if not api_validators:
     log.error("validator fetch returned empty JSON")
     return
@@ -214,7 +214,7 @@ def collect_balance(docker_container, addr, miner_name):
     return
   owner = api_validators['data']['owner']
 
-  api_accounts = safe_get_json(f'${API_BASE_URL}/accounts/{owner}')
+  api_accounts = safe_get_json(f'{API_BASE_URL}/accounts/{owner}')
   if not api_accounts:
     return
   if not api_accounts.get('data') or not api_accounts['data'].get('balance'):
