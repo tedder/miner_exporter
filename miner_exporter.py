@@ -144,6 +144,10 @@ def stats():
   # container with something like cadvisor instead
   SYSTEM_USAGE.labels('CPU', hotspot_name_str).set(psutil.cpu_percent())
   SYSTEM_USAGE.labels('Memory', hotspot_name_str).set(psutil.virtual_memory()[2])
+  SYSTEM_USAGE.labels('CPU-Steal', hotspot_name_str).set(psutil.cpu_times_percent().steal)
+  SYSTEM_USAGE.labels('Disk Used', hotspot_name_str).set(float(psutil.disk_usage('/').used) / float(psutil.disk_usage('/').total))
+  SYSTEM_USAGE.labels('Disk Free', hotspot_name_str).set(float(psutil.disk_usage('/').free) / float(psutil.disk_usage('/').total))
+  SYSTEM_USAGE.labels('Process-Count', hotspot_name_str).set(sum(1 for proc in psutil.process_iter()))
 
   collect_container_run_time(docker_container, hotspot_name_str)
   collect_miner_version(docker_container, hotspot_name_str)
