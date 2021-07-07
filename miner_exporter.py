@@ -24,14 +24,22 @@ log.setLevel(logging.INFO)
 # time to sleep between scrapes
 UPDATE_PERIOD = int(os.environ.get('UPDATE_PERIOD', 30))
 VALIDATOR_CONTAINER_NAME = os.environ.get('VALIDATOR_CONTAINER_NAME', 'validator')
+# for testnet, https://testnet-api.helium.wtf/v1
+API_BASE_URL = os.environ.get('API_BASE_URL', 'https://api.helium.io/v1')
+
+# use the RPC calls where available. This means you have your RPC port open.
+# Once all of the exec calls are replaced we can enable this by default.
+ENABLE_RPC = os.environ.get('ENABLE_RPC', 0)
 
 # prometheus exporter types Gauge,Counter,Summary,Histogram,Info and Enum
 SCRAPE_TIME = prometheus_client.Summary('validator_scrape_time', 'Time spent collecting miner data')
 SYSTEM_USAGE = prometheus_client.Gauge('system_usage',
                                        'Hold current system resource usage',
                                        ['resource_type','validator_name'])
+CHAIN_STATS = prometheus_client.Gauge('chain_stats',
+                              'Stats about the global chain', ['resource_type'])
 VAL = prometheus_client.Gauge('validator_height',
-                              'Height of the blockchain',
+                              "Height of the validator's blockchain",
                               ['resource_type','validator_name'])
 INCON = prometheus_client.Gauge('validator_inconsensus',
                               'Is validator currently in consensus group',
@@ -107,26 +115,48 @@ def get_facts(docker_container_obj):
 # Decorate function with metric.
 @SCRAPE_TIME.time()
 def stats():
+  docker_container = None
+
   try:
     dc = docker.DockerClient()
+
+    # Try to find by specific name first
     docker_container = dc.containers.get(VALIDATOR_CONTAINER_NAME)
-    miner_facts = get_facts(docker_container)
-    hotspot_name_str = get_miner_name(docker_container)
   except docker.errors.NotFound as ex:
-    log.error(f"docker failed while bootstrapping. Not exporting anything. Error: {ex}")
-    return
+    # If find by specifc name fails, try to find by prefix
+    containers = dc.containers.list()
+
+    for container in containers:
+      if container.name.startswith(VALIDATOR_CONTAINER_NAME):
+        docker_container = container
+        break
+
+    # If container not found, then log error and return
+    if docker_container is None:
+      log.error(f"docker failed while bootstrapping. Not exporting anything. Error: {ex}")
+      return
+
+
+  miner_facts = get_facts(docker_container)
+  hotspot_name_str = get_miner_name(docker_container)
 
   # collect total cpu and memory usage. Might want to consider just the docker
   # container with something like cadvisor instead
   SYSTEM_USAGE.labels('CPU', hotspot_name_str).set(psutil.cpu_percent())
   SYSTEM_USAGE.labels('Memory', hotspot_name_str).set(psutil.virtual_memory()[2])
+  SYSTEM_USAGE.labels('CPU-Steal', hotspot_name_str).set(psutil.cpu_times_percent().steal)
+  SYSTEM_USAGE.labels('Disk Used', hotspot_name_str).set(float(psutil.disk_usage('/').used) / float(psutil.disk_usage('/').total))
+  SYSTEM_USAGE.labels('Disk Free', hotspot_name_str).set(float(psutil.disk_usage('/').free) / float(psutil.disk_usage('/').total))
+  SYSTEM_USAGE.labels('Process-Count', hotspot_name_str).set(sum(1 for proc in psutil.process_iter()))
 
   collect_container_run_time(docker_container, hotspot_name_str)
   collect_miner_version(docker_container, hotspot_name_str)
   collect_block_age(docker_container, hotspot_name_str)
   collect_miner_height(docker_container, hotspot_name_str)
+  collect_chain_stats()
   collect_in_consensus(docker_container, hotspot_name_str)
-  collect_ledger_validators(docker_container, hotspot_name_str)
+  # `miner ledger validators` fails on mainnet, 20210626
+  #collect_ledger_validators(docker_container, hotspot_name_str)
   collect_peer_book(docker_container, hotspot_name_str)
   collect_hbbft_performance(docker_container, hotspot_name_str)
   collect_balance(docker_container,miner_facts['address'],hotspot_name_str)
@@ -177,13 +207,29 @@ def collect_container_run_time(docker_container, miner_name):
       start_delta = (now-start_dt).total_seconds()
       UPTIME.labels('start', miner_name).set(start_delta)
 
+def collect_chain_stats():
+  api = safe_get_json(f'{API_BASE_URL}/blocks/height')
+  if not api:
+    log.error("chain height fetch returned empty JSON")
+    return
+  height_val = api['data']['height']
+  CHAIN_STATS.labels('height').set(height_val)
+
+  api = None
+  api = safe_get_json(f'{API_BASE_URL}/validators/stats')
+  if not api:
+    log.error("val stats stats fetch returned empty JSON")
+    return
+  count_val = api['data']['staked']['count']
+  CHAIN_STATS.labels('staked_validators').set(count_val)
+
 def collect_balance(docker_container, addr, miner_name):
   # should move pubkey to getfacts and then pass it in here
   #out = docker_container.exec_run('miner print_keys')
   #for line in out.output.decode('utf-8').split("\n"):
   #  if 'pubkey' in line:
   #    addr=line[9:60]
-  api_validators = safe_get_json(f'https://testnet-api.helium.wtf/v1/validators/{addr}')
+  api_validators = safe_get_json(f'{API_BASE_URL}/validators/{addr}')
   if not api_validators:
     log.error("validator fetch returned empty JSON")
     return
@@ -192,7 +238,7 @@ def collect_balance(docker_container, addr, miner_name):
     return
   owner = api_validators['data']['owner']
 
-  api_accounts = safe_get_json(f'https://testnet-api.helium.wtf/v1/accounts/{owner}')
+  api_accounts = safe_get_json(f'{API_BASE_URL}/accounts/{owner}')
   if not api_accounts:
     return
   if not api_accounts.get('data') or not api_accounts['data'].get('balance'):
