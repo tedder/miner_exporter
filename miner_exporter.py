@@ -41,6 +41,8 @@ SYSTEM_USAGE = prometheus_client.Gauge('system_usage',
                                        ['resource_type','validator_name'])
 CHAIN_STATS = prometheus_client.Gauge('chain_stats',
                               'Stats about the global chain', ['resource_type'])
+ELECTION_STATS = prometheus_client.Gauge('election_stats',
+                              'Stats about the election', ['resource_type','validator_name'])
 VAL = prometheus_client.Gauge('validator_height',
                               "Height of the validator's blockchain",
                               ['resource_type','validator_name'])
@@ -183,6 +185,7 @@ def stats():
   collect_hbbft_performance(docker_container, hotspot_name_str)
   collect_balance(docker_container,miner_facts['address'],hotspot_name_str)
   collect_volume_usage(docker_container, miner_facts['data_mount'], hotspot_name_str)
+  collect_miner_dkg_next(docker_container, hotspot_name_str)
 
 def safe_get_json(url):
   try:
@@ -433,6 +436,24 @@ def collect_ledger_validators(docker_container, miner_name):
     else:
       log.warning(f"failed to grok line: {c}; section count: {len(c)}")
 
+def collect_miner_dkg_next(docker_container, miner_name):
+  # gh#28, eg:
+  # running, next restart: 912045 in 3 blocks.
+  # returns: ('running, ', 'running', 'restart', '912045', '3')
+  #
+  # next election: 912073 in 8 blocks.
+  # returns: (None, None, 'election', '912045', '3')
+  out = docker_container.exec_run('miner dkg next')
+  line = out.output.decode('utf-8').split("\n")[0]
+  print(f"haz dkg next: {line}")
+  if m := re.match('^((\S+), ?)?next (\S+): (\d+) in (\d+) blocks.$', line):
+    next_election_height = m.group(4)
+    next_election_delta = m.group(5)
+    ELECTION_STATS.labels('next_height', miner_name).set(next_election_height)
+    ELECTION_STATS.labels('next_delta', miner_name).set(next_election_delta)
+  else:
+    print(f"no match on dkg next: {line}")
+
 
 def collect_miner_version(docker_container, miner_name):
   out = docker_container.exec_run('miner versions')
@@ -442,7 +463,7 @@ def collect_miner_version(docker_container, miner_name):
   # Installed versions:
   # * 0.1.48	permanent
   for line in results:
-    if m := re.match('^\*\s+([\d\.]+)(.*)', line):
+    if m := re.match(r'^\*\s+([\d\.]+)(.*)', line):
       miner_version = m.group(1)
       log.info(f"found miner version: {miner_version}")
       VALIDATOR_VERSION.labels(miner_name).info({'version': miner_version})
