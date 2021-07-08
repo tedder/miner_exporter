@@ -33,6 +33,9 @@ ENABLE_RPC = os.environ.get('ENABLE_RPC', 0)
 
 # prometheus exporter types Gauge,Counter,Summary,Histogram,Info and Enum
 SCRAPE_TIME = prometheus_client.Summary('validator_scrape_time', 'Time spent collecting miner data')
+VALIDATOR_DISK_USAGE = prometheus_client.Gauge('validator_disk_usage_bytes',
+                                       'Disk used by validator directory/volume',
+                                       ['validator_name'])
 SYSTEM_USAGE = prometheus_client.Gauge('system_usage',
                                        'Hold current system resource usage',
                                        ['resource_type','validator_name'])
@@ -109,8 +112,28 @@ def get_facts(docker_container_obj):
   if printkeys.get('animal_name'):
     miner_facts['name'] = v
   #$ docker exec validator miner print_keys
+
+  # this isn't as useful as it seems, because we'll run `du` inside the container.
+  miner_facts['data_mount'] = None
+  mts = docker_container_obj.attrs.get('Mounts',[])
+  data_mount_list = [x['Source'] for x in mts if x['Destination'].startswith('/var/data')]
+  if len(data_mount_list):
+    miner_facts['data_mount'] = data_mount_list[0]
+
   return miner_facts
 
+def collect_volume_usage(docker_container_obj, data_mount_path, hotspot_name_str):
+  # note this won't come from the RPC, so it's either inside docker or on the root filesystem.
+  # busybox doesn't support -b (bytes), so we'll multiply it.
+  out = docker_container_obj.exec_run('du -ksx /var/data')
+  log.info(out.output)
+  disk_size = out.output.decode('utf-8').rstrip("\n").split("\t", 1)[0]
+  disk_size_i = try_int(disk_size) * 1024
+
+  log.info(f"DS: {disk_size_i} bytes ({disk_size} kb str)")
+  VALIDATOR_DISK_USAGE.labels(hotspot_name_str).set(disk_size_i)
+
+  return disk_size_i
 
 # Decorate function with metric.
 @SCRAPE_TIME.time()
@@ -159,6 +182,7 @@ def stats():
   collect_peer_book(docker_container, hotspot_name_str)
   collect_hbbft_performance(docker_container, hotspot_name_str)
   collect_balance(docker_container,miner_facts['address'],hotspot_name_str)
+  collect_volume_usage(docker_container, miner_facts['data_mount'], hotspot_name_str)
 
 def safe_get_json(url):
   try:
@@ -277,9 +301,9 @@ def collect_block_age(docker_container, miner_name):
   out = docker_container.exec_run('miner info block_age')
   ## transform into a number
   age_val = try_int(out.output.decode('utf-8').rstrip("\n"))
+  log.debug(f"age: {age_val}")
 
   BLOCKAGE.labels('BlockAge', miner_name).set(age_val)
-  log.debug(f"age: {age_val}")
 
 # persist these between calls
 hval = {}
