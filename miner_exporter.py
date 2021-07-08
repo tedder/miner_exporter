@@ -155,8 +155,7 @@ def stats():
   collect_miner_height(docker_container, hotspot_name_str)
   collect_chain_stats()
   collect_in_consensus(docker_container, hotspot_name_str)
-  # `miner ledger validators` fails on mainnet, 20210626
-  #collect_ledger_validators(docker_container, hotspot_name_str)
+  collect_ledger_validators(docker_container, hotspot_name_str)
   collect_peer_book(docker_container, hotspot_name_str)
   collect_hbbft_performance(docker_container, hotspot_name_str)
   collect_balance(docker_container,miner_facts['address'],hotspot_name_str)
