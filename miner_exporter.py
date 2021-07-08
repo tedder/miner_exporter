@@ -78,22 +78,31 @@ def try_float(v):
     return float(v)
   return v
 
-def get_facts(docker_container_obj):
+def exec_run(docker_container, command):
+  (exit_code, output) = docker_container.exec_run(command)
+  if exit_code != 0:
+    log.error(f"docker exec '{command}' failed. code: {exit_code}, output: {output}")
+    return (False, output)
+  return (True, output)
+
+def get_facts(docker_container):
   if miner_facts:
     return miner_facts
   #miner_facts = {
   #  'name': None,
   #  'address': None
   #}
-  out = docker_container_obj.exec_run('miner print_keys')
+  (ok, output) = exec_run(docker_container, 'miner print_keys')
+  if not ok:
+    return
   # sample output:
   # {pubkey,"1YBkf..."}.
   # {onboarding_key,"1YBkf..."}.
   # {animal_name,"one-two-three"}.
 
-  log.debug(out.output)
+  log.debug(output)
   printkeys = {}
-  for line in out.output.split(b"\n"):
+  for line in output.split(b"\n"):
     strline = line.decode('utf-8')
 
     # := requires py3.8
@@ -139,6 +148,8 @@ def stats():
 
   miner_facts = get_facts(docker_container)
   hotspot_name_str = get_miner_name(docker_container)
+  if hotspot_name_str is None:
+    return
 
   # collect total cpu and memory usage. Might want to consider just the docker
   # container with something like cadvisor instead
@@ -223,11 +234,6 @@ def collect_chain_stats():
   CHAIN_STATS.labels('staked_validators').set(count_val)
 
 def collect_balance(docker_container, addr, miner_name):
-  # should move pubkey to getfacts and then pass it in here
-  #out = docker_container.exec_run('miner print_keys')
-  #for line in out.output.decode('utf-8').split("\n"):
-  #  if 'pubkey' in line:
-  #    addr=line[9:60]
   api_validators = safe_get_json(f'{API_BASE_URL}/validators/{addr}')
   if not api_validators:
     log.error("validator fetch returned empty JSON")
@@ -247,25 +253,31 @@ def collect_balance(docker_container, addr, miner_name):
   #print('balance',balance)
   BALANCE.labels(miner_name).set(balance)
 
-    
+
 def get_miner_name(docker_container):
   # need to fix this. hotspot name really should only be queried once
-  out = docker_container.exec_run('miner info name')
-  log.debug(out.output)
-  hotspot_name = out.output.decode('utf-8').rstrip("\n")
+  (ok, output) = exec_run(docker_container, 'miner info name')
+  if not ok:
+    return
+  log.debug(output)
+  hotspot_name = output.decode('utf-8').rstrip("\n")
   return hotspot_name
 
 def collect_miner_height(docker_container, miner_name):
   # grab the local blockchain height
-  out = docker_container.exec_run('miner info height')
-  log.debug(out.output)
-  txt = out.output.decode('utf-8').rstrip("\n")
-  VAL.labels('Height', miner_name).set(out.output.split()[1])
+  (ok, output) = exec_run(docker_container, 'miner info height')
+  if not ok:
+    return
+  log.debug(output)
+  txt = output.decode('utf-8').rstrip("\n")
+  VAL.labels('Height', miner_name).set(output.split()[1])
 
 def collect_in_consensus(docker_container, miner_name):
   # check if currently in consensus group
-  out = docker_container.exec_run('miner info in_consensus')
-  incon_txt = out.output.decode('utf-8').rstrip("\n")
+  (ok, output) = exec_run(docker_container, 'miner info in_consensus')
+  if not ok:
+    return
+  incon_txt = output.decode('utf-8').rstrip("\n")
   incon = 0
   if incon_txt == 'true':
     incon = 1
@@ -274,9 +286,11 @@ def collect_in_consensus(docker_container, miner_name):
 
 def collect_block_age(docker_container, miner_name):
   # collect current block age
-  out = docker_container.exec_run('miner info block_age')
+  (ok, output) = exec_run(docker_container, 'miner info block_age')
+  if not ok:
+    return
   ## transform into a number
-  age_val = try_int(out.output.decode('utf-8').rstrip("\n"))
+  age_val = try_int(output.decode('utf-8').rstrip("\n"))
 
   BLOCKAGE.labels('BlockAge', miner_name).set(age_val)
   log.debug(f"age: {age_val}")
@@ -285,10 +299,12 @@ def collect_block_age(docker_container, miner_name):
 hval = {}
 def collect_hbbft_performance(docker_container, miner_name):
   # parse the hbbft performance table for the penalty field
-  out = docker_container.exec_run('miner hbbft perf --format csv')
-  #print(out.output)
+  (ok, output) = exec_run(docker_container, 'miner hbbft perf --format csv')
+  if not ok:
+    return
+  #print(output)
 
-  for line in out.output.decode('utf-8').split("\n"):
+  for line in output.decode('utf-8').split("\n"):
     c = [x.strip() for x in line.split(',')]
     # samples:
 
@@ -315,7 +331,7 @@ def collect_hbbft_performance(docker_container, miner_name):
       hval['bba_last_val']=try_float(c[3])
       hval['seen_last_val']=try_float(c[4])
       hval['pen_val'] = try_float(c[5])
-      
+
     elif len(c) == 6:
       # not our line
       pass
@@ -337,7 +353,9 @@ def collect_hbbft_performance(docker_container, miner_name):
 
 def collect_peer_book(docker_container, miner_name):
   # peer book -s output
-  out = docker_container.exec_run('miner peer book -s --format csv')
+  (ok, output) = exec_run(docker_container, 'miner peer book -s --format csv')
+  if not ok:
+    return
   # parse the peer book output
 
   # samples
@@ -349,7 +367,7 @@ def collect_peer_book(docker_container, miner_name):
   # /ip4/192.168.0.4/tcp/2154,/ip4/72.224.176.69/tcp/2154,/p2p/1YU2cE9FNrwkTr8RjSBT7KLvxwPF9i6mAx8GoaHB9G3tou37jCM,clever-sepia-bull
 
   sessions = 0
-  for line in out.output.decode('utf-8').split("\r\n"):
+  for line in output.decode('utf-8').split("\r\n"):
     c = line.split(',')
     if len(c) == 6:
       log.debug(f"peerbook entry6: {c}")
@@ -376,8 +394,10 @@ def collect_peer_book(docker_container, miner_name):
 
 def collect_ledger_validators(docker_container, miner_name):
   # ledger validators output
-  out = docker_container.exec_run('miner ledger validators --format csv')
-  results = out.output.decode('utf-8').split("\n")
+  (ok, output) = exec_run(docker_container, 'miner ledger validators --format csv')
+  if not ok:
+    return
+  results = output.decode('utf-8').split("\n")
   # parse the ledger validators output
   for line in [x.rstrip("\r\n") for x in results]:
     c = line.split(',')
@@ -411,8 +431,10 @@ def collect_ledger_validators(docker_container, miner_name):
 
 
 def collect_miner_version(docker_container, miner_name):
-  out = docker_container.exec_run('miner versions')
-  results = out.output.decode('utf-8').split("\n")
+  (ok, output) = exec_run(docker_container, 'miner versions')
+  if not ok:
+    return
+  results = output.decode('utf-8').split("\n")
   # sample output
   # $ docker exec validator miner versions
   # Installed versions:
@@ -438,4 +460,3 @@ if __name__ == '__main__':
 
     # sleep 30 seconds
     time.sleep(UPDATE_PERIOD)
-
