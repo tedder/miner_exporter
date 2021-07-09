@@ -27,6 +27,11 @@ VALIDATOR_CONTAINER_NAME = os.environ.get('VALIDATOR_CONTAINER_NAME', 'validator
 # for testnet, https://testnet-api.helium.wtf/v1
 API_BASE_URL = os.environ.get('API_BASE_URL', 'https://api.helium.io/v1')
 
+# Gather the ledger penalities for all, instead of just "this" validator. When in this
+# mode all validators from `miner validator ledger` with a penalty >0.0 will be included.
+# The >0 constraint is just to keep data and traffic smaller.
+ALL_PENALTIES = os.environ.get('ALL_PENALTIES', 0)
+
 # use the RPC calls where available. This means you have your RPC port open.
 # Once all of the exec calls are replaced we can enable this by default.
 ENABLE_RPC = os.environ.get('ENABLE_RPC', 0)
@@ -412,7 +417,7 @@ def collect_ledger_validators(docker_container, miner_name):
         continue
 
       (val_name,address,last_heartbeat,stake,status,version,tenure_penalty,dkg_penalty,performance_penalty,total_penalty) = c
-      if miner_name == val_name:
+      if ALL_PENALTIES or miner_name == val_name:
         log.debug(f"have pen line: {c}")
         tenure_penalty_val = try_float(tenure_penalty)
         dkg_penalty_val = try_float(dkg_penalty)
@@ -420,12 +425,17 @@ def collect_ledger_validators(docker_container, miner_name):
         total_penalty_val = try_float(total_penalty)
         last_heartbeat = try_float(last_heartbeat)
 
-        log.info(f"L penalty: {total_penalty_val}")
-        LEDGER_PENALTY.labels('ledger_penalties', 'tenure', miner_name).set(tenure_penalty_val)
-        LEDGER_PENALTY.labels('ledger_penalties', 'dkg', miner_name).set(dkg_penalty_val)
-        LEDGER_PENALTY.labels('ledger_penalties', 'performance', miner_name).set(performance_penalty_val)
-        LEDGER_PENALTY.labels('ledger_penalties', 'total', miner_name).set(total_penalty_val)
-        BLOCKAGE.labels('last_heartbeat', miner_name).set(last_heartbeat)
+        log.debug(f"L penalty: {total_penalty_val}")
+        if not ALL_PENALTIES or total_penalty_val > 0.0:
+          LEDGER_PENALTY.labels('ledger_penalties', 'tenure', val_name).set(tenure_penalty_val)
+          LEDGER_PENALTY.labels('ledger_penalties', 'dkg', val_name).set(dkg_penalty_val)
+          LEDGER_PENALTY.labels('ledger_penalties', 'performance', val_name).set(performance_penalty_val)
+          LEDGER_PENALTY.labels('ledger_penalties', 'total', val_name).set(total_penalty_val)
+
+        # In an effort to reduce the number of metrics to track, only gather
+        # last_heartbear for this miner_name. Will this surprise users?
+        if miner_name == val_name:
+          BLOCKAGE.labels('last_heartbeat', val_name).set(last_heartbeat)
 
     elif len(line) == 0:
       # empty lines are fine
