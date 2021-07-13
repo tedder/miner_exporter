@@ -27,12 +27,20 @@ VALIDATOR_CONTAINER_NAME = os.environ.get('VALIDATOR_CONTAINER_NAME', 'validator
 # for testnet, https://testnet-api.helium.wtf/v1
 API_BASE_URL = os.environ.get('API_BASE_URL', 'https://api.helium.io/v1')
 
+# Gather the ledger penalities for all, instead of just "this" validator. When in this
+# mode all validators from `miner validator ledger` with a penalty >0.0 will be included.
+# The >0 constraint is just to keep data and traffic smaller.
+ALL_PENALTIES = os.environ.get('ALL_PENALTIES', 0)
+
 # use the RPC calls where available. This means you have your RPC port open.
 # Once all of the exec calls are replaced we can enable this by default.
 ENABLE_RPC = os.environ.get('ENABLE_RPC', 0)
 
 # prometheus exporter types Gauge,Counter,Summary,Histogram,Info and Enum
 SCRAPE_TIME = prometheus_client.Summary('validator_scrape_time', 'Time spent collecting miner data')
+VALIDATOR_DISK_USAGE = prometheus_client.Gauge('validator_disk_usage_bytes',
+                                       'Disk used by validator directory/volume',
+                                       ['validator_name'])
 SYSTEM_USAGE = prometheus_client.Gauge('system_usage',
                                        'Hold current system resource usage',
                                        ['resource_type','validator_name'])
@@ -109,8 +117,28 @@ def get_facts(docker_container_obj):
   if printkeys.get('animal_name'):
     miner_facts['name'] = v
   #$ docker exec validator miner print_keys
+
+  # this isn't as useful as it seems, because we'll run `du` inside the container.
+  miner_facts['data_mount'] = None
+  mts = docker_container_obj.attrs.get('Mounts',[])
+  data_mount_list = [x['Source'] for x in mts if x['Destination'].startswith('/var/data')]
+  if len(data_mount_list):
+    miner_facts['data_mount'] = data_mount_list[0]
+
   return miner_facts
 
+def collect_volume_usage(docker_container_obj, data_mount_path, hotspot_name_str):
+  # note this won't come from the RPC, so it's either inside docker or on the root filesystem.
+  # busybox doesn't support -b (bytes), so we'll multiply it.
+  out = docker_container_obj.exec_run('du -ksx /var/data')
+  log.info(out.output)
+  disk_size = out.output.decode('utf-8').rstrip("\n").split("\t", 1)[0]
+  disk_size_i = try_int(disk_size) * 1024
+
+  log.info(f"DS: {disk_size_i} bytes ({disk_size} kb str)")
+  VALIDATOR_DISK_USAGE.labels(hotspot_name_str).set(disk_size_i)
+
+  return disk_size_i
 
 # Decorate function with metric.
 @SCRAPE_TIME.time()
@@ -159,6 +187,7 @@ def stats():
   collect_peer_book(docker_container, hotspot_name_str)
   collect_hbbft_performance(docker_container, hotspot_name_str)
   collect_balance(docker_container,miner_facts['address'],hotspot_name_str)
+  collect_volume_usage(docker_container, miner_facts['data_mount'], hotspot_name_str)
 
 def safe_get_json(url):
   try:
@@ -277,9 +306,9 @@ def collect_block_age(docker_container, miner_name):
   out = docker_container.exec_run('miner info block_age')
   ## transform into a number
   age_val = try_int(out.output.decode('utf-8').rstrip("\n"))
+  log.debug(f"age: {age_val}")
 
   BLOCKAGE.labels('BlockAge', miner_name).set(age_val)
-  log.debug(f"age: {age_val}")
 
 # persist these between calls
 hval = {}
@@ -388,20 +417,25 @@ def collect_ledger_validators(docker_container, miner_name):
         continue
 
       (val_name,address,last_heartbeat,stake,status,version,tenure_penalty,dkg_penalty,performance_penalty,total_penalty) = c
-      if miner_name == val_name:
+      if ALL_PENALTIES or miner_name == val_name:
         log.debug(f"have pen line: {c}")
         tenure_penalty_val = try_float(tenure_penalty)
         dkg_penalty_val = try_float(dkg_penalty)
         performance_penalty_val = try_float(performance_penalty)
         total_penalty_val = try_float(total_penalty)
-        least_heartbeat=try_float(last_heartbeat)
+        last_heartbeat = try_float(last_heartbeat)
 
-        log.info(f"L penalty: {total_penalty_val}")
-        LEDGER_PENALTY.labels('ledger_penalties', 'tenure', miner_name).set(tenure_penalty_val)
-        LEDGER_PENALTY.labels('ledger_penalties', 'dkg', miner_name).set(dkg_penalty_val)
-        LEDGER_PENALTY.labels('ledger_penalties', 'performance', miner_name).set(performance_penalty_val)
-        LEDGER_PENALTY.labels('ledger_penalties', 'total', miner_name).set(total_penalty_val)
-        BLOCKAGE.labels('last_heartbeat', miner_name).set(last_heartbeat)
+        log.debug(f"L penalty: {total_penalty_val}")
+        if not ALL_PENALTIES or total_penalty_val > 0.0:
+          LEDGER_PENALTY.labels('ledger_penalties', 'tenure', val_name).set(tenure_penalty_val)
+          LEDGER_PENALTY.labels('ledger_penalties', 'dkg', val_name).set(dkg_penalty_val)
+          LEDGER_PENALTY.labels('ledger_penalties', 'performance', val_name).set(performance_penalty_val)
+          LEDGER_PENALTY.labels('ledger_penalties', 'total', val_name).set(total_penalty_val)
+
+        # In an effort to reduce the number of metrics to track, only gather
+        # last_heartbear for this miner_name. Will this surprise users?
+        if miner_name == val_name:
+          BLOCKAGE.labels('last_heartbeat', val_name).set(last_heartbeat)
 
     elif len(line) == 0:
       # empty lines are fine
