@@ -1,20 +1,59 @@
 #!/usr/bin/env python3
 
 # external packages
+import dateutil.parser
+import docker
 import prometheus_client
 import psutil
-import docker
 import requests
-import dateutil.parser
 
 # internal packages
 import datetime
-import time
-import subprocess
-import sys
+import logging
 import os
 import re
-import logging
+import subprocess
+import sys
+import time
+from collections import namedtuple
+
+ExecResult = namedtuple('ExecResult', ['exit_code', 'output'])
+
+class ExecWrapper:
+  docker_container = None
+
+  def __init__(self, miner_path):
+    if not miner_path:
+      try:
+        dc = docker.DockerClient()
+
+        # Try to find by specific name first
+        self.docker_container = dc.containers.get(VALIDATOR_CONTAINER_NAME)
+      except docker.errors.NotFound as ex:
+        # If find by specifc name fails, try to find by prefix
+        containers = dc.containers.list()
+
+        for container in containers:
+          if container.name.startswith(VALIDATOR_CONTAINER_NAME):
+            self.docker_container = container
+            break
+
+        # If container not found, then log error and return
+        if docker_container is None:
+          self.docker_container = None
+          throw
+
+  def run(self, cmdline):
+    out = (-1, '')
+    if self.docker_container is None:
+      cmdline = MINER_PATH + ' ' + cmdline
+      proc_info = subprocess.run(cmdline.split(), capture_output=True)
+      out = ExecResult(proc_info.returncode, proc_info.stdout)
+    else:
+      out = self.docker_container.exec_run('miner ' + cmdline)
+
+    return out
+
 
 # remember, levels: debug, info, warning, error, critical. there is no trace.
 logging.basicConfig(format="%(filename)s:%(funcName)s:%(lineno)d:%(levelname)s\t%(message)s", level=logging.WARNING)
@@ -35,6 +74,8 @@ ALL_PENALTIES = os.environ.get('ALL_PENALTIES', 0)
 # use the RPC calls where available. This means you have your RPC port open.
 # Once all of the exec calls are replaced we can enable this by default.
 ENABLE_RPC = os.environ.get('ENABLE_RPC', 0)
+# Call "miner" directly instead of using `docker exec miner`. This will be used for the non-RPC calls
+MINER_PATH =  os.getenv("MINER_PATH", None)
 
 # prometheus exporter types Gauge,Counter,Summary,Histogram,Info and Enum
 SCRAPE_TIME = prometheus_client.Summary('validator_scrape_time', 'Time spent collecting miner data')
@@ -86,19 +127,18 @@ def try_float(v):
     return float(v)
   return v
 
-def get_facts(docker_container_obj):
+def get_facts(execwrap):
   if miner_facts:
     return miner_facts
   #miner_facts = {
   #  'name': None,
   #  'address': None
   #}
-  out = docker_container_obj.exec_run('miner print_keys')
+  out = execwrap.run('print_keys')
   # sample output:
   # {pubkey,"1YBkf..."}.
   # {onboarding_key,"1YBkf..."}.
   # {animal_name,"one-two-three"}.
-
   log.debug(out.output)
   printkeys = {}
   for line in out.output.split(b"\n"):
@@ -109,7 +149,7 @@ def get_facts(docker_container_obj):
       log.debug(m)
       k = m.group(1)
       v = m.group(2)
-      log.debug(k,v)
+      log.debug(f'{k}:{v}')
       printkeys[k] = v
 
   if v := printkeys.get('pubkey'):
@@ -119,18 +159,25 @@ def get_facts(docker_container_obj):
   #$ docker exec validator miner print_keys
 
   # this isn't as useful as it seems, because we'll run `du` inside the container.
-  miner_facts['data_mount'] = None
-  mts = docker_container_obj.attrs.get('Mounts',[])
-  data_mount_list = [x['Source'] for x in mts if x['Destination'].startswith('/var/data')]
-  if len(data_mount_list):
-    miner_facts['data_mount'] = data_mount_list[0]
+  if execwrap.docker_container is not None:
+    miner_facts['data_mount'] = None
+    mts = docker_container_obj.attrs.get('Mounts',[])
+    data_mount_list = [x['Source'] for x in mts if x['Destination'].startswith('/var/data')]
+    if len(data_mount_list):
+      miner_facts['data_mount'] = data_mount_list[0]
+  else:
+      miner_facts['data_mount'] = '/'
 
   return miner_facts
 
-def collect_volume_usage(docker_container_obj, data_mount_path, hotspot_name_str):
+def collect_volume_usage(execwrap, data_mount_path, hotspot_name_str):
   # note this won't come from the RPC, so it's either inside docker or on the root filesystem.
   # busybox doesn't support -b (bytes), so we'll multiply it.
-  out = docker_container_obj.exec_run('du -ksx /var/data')
+  if execwrap.docker_container is None:
+    # Need to make\ execwrap do non `miner ...` commands
+    return
+
+  out = execwrap.run('du -ksx /var/data')
   log.info(out.output)
   disk_size = out.output.decode('utf-8').rstrip("\n").split("\t", 1)[0]
   disk_size_i = try_int(disk_size) * 1024
@@ -146,27 +193,13 @@ def stats():
   docker_container = None
 
   try:
-    dc = docker.DockerClient()
+    execwrap = ExecWrapper(MINER_PATH)
+  except:
+    log.error(f"docker failed while bootstrapping. Not exporting anything. Error: {ex}")
+    return
 
-    # Try to find by specific name first
-    docker_container = dc.containers.get(VALIDATOR_CONTAINER_NAME)
-  except docker.errors.NotFound as ex:
-    # If find by specifc name fails, try to find by prefix
-    containers = dc.containers.list()
-
-    for container in containers:
-      if container.name.startswith(VALIDATOR_CONTAINER_NAME):
-        docker_container = container
-        break
-
-    # If container not found, then log error and return
-    if docker_container is None:
-      log.error(f"docker failed while bootstrapping. Not exporting anything. Error: {ex}")
-      return
-
-
-  miner_facts = get_facts(docker_container)
-  hotspot_name_str = get_miner_name(docker_container)
+  miner_facts = get_facts(execwrap)
+  hotspot_name_str = get_miner_name(execwrap)
 
   # collect total cpu and memory usage. Might want to consider just the docker
   # container with something like cadvisor instead
@@ -177,17 +210,17 @@ def stats():
   SYSTEM_USAGE.labels('Disk Free', hotspot_name_str).set(float(psutil.disk_usage('/').free) / float(psutil.disk_usage('/').total))
   SYSTEM_USAGE.labels('Process-Count', hotspot_name_str).set(sum(1 for proc in psutil.process_iter()))
 
-  collect_container_run_time(docker_container, hotspot_name_str)
-  collect_miner_version(docker_container, hotspot_name_str)
-  collect_block_age(docker_container, hotspot_name_str)
-  collect_miner_height(docker_container, hotspot_name_str)
+  collect_container_run_time(execwrap, hotspot_name_str)
+  collect_miner_version(execwrap, hotspot_name_str)
+  collect_block_age(execwrap, hotspot_name_str)
+  collect_miner_height(execwrap, hotspot_name_str)
   collect_chain_stats()
-  collect_in_consensus(docker_container, hotspot_name_str)
-  collect_ledger_validators(docker_container, hotspot_name_str)
-  collect_peer_book(docker_container, hotspot_name_str)
-  collect_hbbft_performance(docker_container, hotspot_name_str)
-  collect_balance(docker_container,miner_facts['address'],hotspot_name_str)
-  collect_volume_usage(docker_container, miner_facts['data_mount'], hotspot_name_str)
+  collect_in_consensus(execwrap, hotspot_name_str)
+  collect_ledger_validators(execwrap, hotspot_name_str)
+  collect_peer_book(execwrap, hotspot_name_str)
+  collect_hbbft_performance(execwrap, hotspot_name_str)
+  collect_balance(miner_facts['address'], hotspot_name_str)
+  collect_volume_usage(execwrap, miner_facts['data_mount'], hotspot_name_str)
 
 def safe_get_json(url):
   try:
@@ -203,8 +236,11 @@ def safe_get_json(url):
     log.error(f"error fetching {url}: {ex}")
     return
 
-def collect_container_run_time(docker_container, miner_name):
-  attrs = docker_container.attrs
+def collect_container_run_time(execwrap, miner_name):
+  if execwrap.docker_container is None:
+    return
+
+  attrs = execwrap.docker_container.attrs
 
   # examples and other things we could track:
   # "Created": "2021-05-18T22:11:48.962678927Z",
@@ -251,7 +287,7 @@ def collect_chain_stats():
   count_val = api['data']['staked']['count']
   CHAIN_STATS.labels('staked_validators').set(count_val)
 
-def collect_balance(docker_container, addr, miner_name):
+def collect_balance(addr, miner_name):
   # should move pubkey to getfacts and then pass it in here
   #out = docker_container.exec_run('miner print_keys')
   #for line in out.output.decode('utf-8').split("\n"):
@@ -276,24 +312,23 @@ def collect_balance(docker_container, addr, miner_name):
   #print('balance',balance)
   BALANCE.labels(miner_name).set(balance)
 
-    
-def get_miner_name(docker_container):
+def get_miner_name(execwrap):
   # need to fix this. hotspot name really should only be queried once
-  out = docker_container.exec_run('miner info name')
+  out = execwrap.run('info name')
   log.debug(out.output)
   hotspot_name = out.output.decode('utf-8').rstrip("\n")
   return hotspot_name
 
-def collect_miner_height(docker_container, miner_name):
+def collect_miner_height(execwrap, miner_name):
   # grab the local blockchain height
-  out = docker_container.exec_run('miner info height')
+  out = execwrap.run('info height')
   log.debug(out.output)
   txt = out.output.decode('utf-8').rstrip("\n")
   VAL.labels('Height', miner_name).set(out.output.split()[1])
 
-def collect_in_consensus(docker_container, miner_name):
+def collect_in_consensus(execwrap, miner_name):
   # check if currently in consensus group
-  out = docker_container.exec_run('miner info in_consensus')
+  out = execwrap.run('info in_consensus')
   incon_txt = out.output.decode('utf-8').rstrip("\n")
   incon = 0
   if incon_txt == 'true':
@@ -301,9 +336,9 @@ def collect_in_consensus(docker_container, miner_name):
   log.info(f"in consensus? {incon} / {incon_txt}")
   INCON.labels(miner_name).set(incon)
 
-def collect_block_age(docker_container, miner_name):
+def collect_block_age(execwrap, miner_name):
   # collect current block age
-  out = docker_container.exec_run('miner info block_age')
+  out = execwrap.run('info block_age')
   ## transform into a number
   age_val = try_int(out.output.decode('utf-8').rstrip("\n"))
   log.debug(f"age: {age_val}")
@@ -312,47 +347,49 @@ def collect_block_age(docker_container, miner_name):
 
 # persist these between calls
 hval = {}
-def collect_hbbft_performance(docker_container, miner_name):
+def collect_hbbft_performance(execwrap, miner_name):
   # parse the hbbft performance table for the penalty field
-  out = docker_container.exec_run('miner hbbft perf --format csv')
-  #print(out.output)
+  out = execwrap.run('hbbft perf --format csv')
+  if out.exit_code != 0:
+    log.debug("Error getting hbbft perf, skipping")
+  else:
+    #print(out.output)
 
-  for line in out.output.decode('utf-8').split("\n"):
-    c = [x.strip() for x in line.split(',')]
-    # samples:
+    for line in out.output.decode('utf-8').split("\n"):
+      c = [x.strip() for x in line.split(',')]
+      have_data = False
 
-    have_data = False
+      if len(c) == 7 and miner_name == c[0]:
+        # name,bba_completions,seen_votes,last_bba,last_seen,tenure,penalty
+        # great-clear-chinchilla,5/5,237/237,0,0,2.91,2.91
+        log.debug(f"resl7: {c}; {miner_name}/{c[0]}")
 
-    if len(c) == 7 and miner_name == c[0]:
-      # name,bba_completions,seen_votes,last_bba,last_seen,tenure,penalty
-      # great-clear-chinchilla,5/5,237/237,0,0,2.91,2.91
-      log.debug(f"resl7: {c}; {miner_name}/{c[0]}")
+        (hval['bba_votes'],hval['bba_tot'])=c[1].split("/")
+        (hval['seen_votes'],hval['seen_tot'])=c[2].split("/")
+        hval['bba_last_val']=try_float(c[3])
+        hval['seen_last_val']=try_float(c[4])
+        hval['tenure'] = try_float(c[5])
+        hval['pen_val'] = try_float(c[6])
+      elif len(c) == 6 and miner_name == c[0]:
+        # name,bba_completions,seen_votes,last_bba,last_seen,penalty
+        # curly-peach-owl,11/11,368/368,0,0,1.86
+        log.debug(f"resl6: {c}; {miner_name}/{c[0]}")
 
-      (hval['bba_votes'],hval['bba_tot'])=c[1].split("/")
-      (hval['seen_votes'],hval['seen_tot'])=c[2].split("/")
-      hval['bba_last_val']=try_float(c[3])
-      hval['seen_last_val']=try_float(c[4])
-      hval['tenure'] = try_float(c[5])
-      hval['pen_val'] = try_float(c[6])
-    elif len(c) == 6 and miner_name == c[0]:
-      # name,bba_completions,seen_votes,last_bba,last_seen,penalty
-      # curly-peach-owl,11/11,368/368,0,0,1.86
-      log.debug(f"resl6: {c}; {miner_name}/{c[0]}")
+        (hval['bba_votes'],hval['bba_tot'])=c[1].split("/")
+        (hval['seen_votes'],hval['seen_tot'])=c[2].split("/")
+        hval['bba_last_val']=try_float(c[3])
+        hval['seen_last_val']=try_float(c[4])
+        hval['pen_val'] = try_float(c[5])
 
-      (hval['bba_votes'],hval['bba_tot'])=c[1].split("/")
-      (hval['seen_votes'],hval['seen_tot'])=c[2].split("/")
-      hval['bba_last_val']=try_float(c[3])
-      hval['seen_last_val']=try_float(c[4])
-      hval['pen_val'] = try_float(c[5])
-      
-    elif len(c) == 6:
-      # not our line
-      pass
-    elif len(line) == 0:
-      # empty line
-      pass
-    else:
-      log.debug(f"wrong len ({len(c)}) for hbbft: {c}")
+      elif len(c) == 6 or len(c) == 7:
+        # not our line
+        pass
+      elif len(line) == 0:
+        # empty line
+        pass
+      else:
+        log.debug(f"wrong len ({len(c)}) for hbbft: {c}")
+
 
     # always set these, that way they get reset when out of CG
     HBBFT_PERF.labels('hbbft_perf','Penalty', miner_name).set(hval.get('pen_val', 0))
@@ -364,9 +401,9 @@ def collect_hbbft_performance(docker_container, miner_name):
     HBBFT_PERF.labels('hbbft_perf','Seen_Last', miner_name).set(hval.get('seen_last_val', 0))
     HBBFT_PERF.labels('hbbft_perf','Tenure', miner_name).set(hval.get('tenure', 0))
 
-def collect_peer_book(docker_container, miner_name):
+def collect_peer_book(execwrap, miner_name):
   # peer book -s output
-  out = docker_container.exec_run('miner peer book -s --format csv')
+  out = execwrap.run('peer book -s --format csv')
   # parse the peer book output
 
   # samples
@@ -403,9 +440,9 @@ def collect_peer_book(docker_container, miner_name):
   log.debug(f"sess: {sessions}")
   SESSIONS.labels('sessions', miner_name).set(sessions)
 
-def collect_ledger_validators(docker_container, miner_name):
+def collect_ledger_validators(execwrap, miner_name):
   # ledger validators output
-  out = docker_container.exec_run('miner ledger validators --format csv')
+  out = execwrap.run('ledger validators --format csv')
   results = out.output.decode('utf-8').split("\n")
   # parse the ledger validators output
   for line in [x.rstrip("\r\n") for x in results]:
@@ -444,8 +481,8 @@ def collect_ledger_validators(docker_container, miner_name):
       log.warning(f"failed to grok line: {c}; section count: {len(c)}")
 
 
-def collect_miner_version(docker_container, miner_name):
-  out = docker_container.exec_run('miner versions')
+def collect_miner_version(execwrap, miner_name):
+  out = execwrap.run('versions')
   results = out.output.decode('utf-8').split("\n")
   # sample output
   # $ docker exec validator miner versions
@@ -472,4 +509,3 @@ if __name__ == '__main__':
 
     # sleep 30 seconds
     time.sleep(UPDATE_PERIOD)
-
