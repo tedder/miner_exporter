@@ -27,14 +27,30 @@ log.setLevel(logging.INFO)
 # time to sleep between scrapes
 UPDATE_PERIOD = int(os.environ.get('UPDATE_PERIOD', 30))
 VALIDATOR_CONTAINER_NAME = os.environ.get('VALIDATOR_CONTAINER_NAME', 'validator')
+# for testnet, https://testnet-api.helium.wtf/v1
+API_BASE_URL = os.environ.get('API_BASE_URL', 'https://api.helium.io/v1')
+
+# Gather the ledger penalities for all, instead of just "this" validator. When in this
+# mode all validators from `miner validator ledger` with a penalty >0.0 will be included.
+# The >0 constraint is just to keep data and traffic smaller.
+ALL_PENALTIES = os.environ.get('ALL_PENALTIES', 0)
+
+# use the RPC calls where available. This means you have your RPC port open.
+# Once all of the exec calls are replaced we can enable this by default.
+ENABLE_RPC = os.environ.get('ENABLE_RPC', 0)
 
 # prometheus exporter types Gauge,Counter,Summary,Histogram,Info and Enum
 SCRAPE_TIME = prometheus_client.Summary('validator_scrape_time', 'Time spent collecting miner data')
+VALIDATOR_DISK_USAGE = prometheus_client.Gauge('validator_disk_usage_bytes',
+                                       'Disk used by validator directory/volume',
+                                       ['validator_name'])
 SYSTEM_USAGE = prometheus_client.Gauge('system_usage',
                                        'Hold current system resource usage',
                                        ['resource_type','validator_name'])
+CHAIN_STATS = prometheus_client.Gauge('chain_stats',
+                              'Stats about the global chain', ['resource_type'])
 VAL = prometheus_client.Gauge('validator_height',
-                              'Height of the blockchain',
+                              "Height of the validator's blockchain",
                               ['resource_type','validator_name'])
 INCON = prometheus_client.Gauge('validator_inconsensus',
                               'Is validator currently in consensus group',
@@ -73,10 +89,12 @@ def try_float(v):
 # Decorate function with metric.
 @SCRAPE_TIME.time()
 def stats():
-  miner_name = "wild-brunette-monkey"# jsonRpcClient.info_name()
+  miner_name = jsonRpcClient.info_name()
   
   try:
     dc = docker.DockerClient()
+
+    # Try to find by specific name first
     docker_container = dc.containers.get(VALIDATOR_CONTAINER_NAME)
   except docker.errors.NotFound as ex:
     log.error(f"docker failed while bootstrapping. Not exporting anything. Error: {ex}")
@@ -97,6 +115,19 @@ def stats():
   collect_peer_book(miner_name)
   collect_balance(miner_name) 
 
+def safe_get_json(url):
+  try:
+    ret = requests.get(url)
+    if not ret.status_code == requests.codes.ok:
+      log.error(f"bad status code ({ret.status_code}) from url: {url}")
+      return
+    retj = ret.json()
+    return retj
+    
+  except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as ex:
+    log.error(f"error fetching {url}: {ex}")
+    return
+    
 def collect_container_run_time(docker_container, miner_name):
   attrs = docker_container.attrs
 
@@ -129,11 +160,25 @@ def collect_container_run_time(docker_container, miner_name):
       start_delta = (now-start_dt).total_seconds()
       UPTIME.labels('start', miner_name).set(start_delta)
 
+def collect_chain_stats():
+  api = safe_get_json(f'{API_BASE_URL}/blocks/height')
+  if not api:
+    log.error("chain height fetch returned empty JSON")
+    return
+  height_val = api['data']['height']
+  CHAIN_STATS.labels('height').set(height_val)
+
+  api = None
+  api = safe_get_json(f'{API_BASE_URL}/validators/stats')
+  if not api:
+    log.error("val stats stats fetch returned empty JSON")
+    return
+  count_val = api['data']['staked']['count']
+  CHAIN_STATS.labels('staked_validators').set(count_val)
 # persist these between calls
+
 hval = {}
 def collect_hbbft_performance(docker_container, miner_name):  
-  
-
   # parse the hbbft performance table for the penalty field
   out = docker_container.exec_run('miner hbbft perf --format csv')
   #print(out.output)
