@@ -1,0 +1,3 @@
+#!/bin/sh
+. @@DESTROOT@@/pyenv/bin/activate
+exec python miner_exporter.py

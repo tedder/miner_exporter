@@ -1,0 +1,11 @@
+[Unit]
+Description=Validator statistics for Prometheus
+
+[Service]
+User=ubuntu
+ExecStart=@@DESTROOT@@/run
+WorkingDirectory=@@DESTROOT@@
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
