@@ -59,10 +59,10 @@ class MinerJSONRPC:
     def peer_book_self(self) -> dict:
         return self.rpc_call('peer_book', params={ 'addr' : 'self' })
 
-    def ledger_validators(self, params: typing.Optional[dict]=None) -> typing.List[dict]:
+    def ledger_validators(self, **params) -> typing.List[dict]:
         return self.rpc_call('ledger_validators', params)
 
-    def ledger_balance(self, params: typing.Optional[dict]=None) -> typing.List[dict]:
+    def ledger_balance(self, **params) -> typing.List[dict]:
         return self.rpc_call('ledger_balance', params)
 
     def hbbft_perf(self) -> typing.List[dict]:

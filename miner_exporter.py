@@ -91,18 +91,11 @@ def stats(miner: MinerJSONRPC):
     except:
         log.error("in consensus fetch failure")
 
-    validators = None
+    this_validator = None
     try:
-        validators = miner.ledger_validators()
+        this_validator = miner.ledger_validators(address=addr)
     except:
         log.error("validator fetch failure")
-
-    this_validator = None
-    if validators is not None:
-        for validator in validators:
-            if validator['address'] == addr:
-                this_validator = validator
-                break
 
     owner = None
     if this_validator is not None:
@@ -111,7 +104,7 @@ def stats(miner: MinerJSONRPC):
     balance = None
     if owner is not None:
         try:
-            balance_result = miner.ledger_balance({ "address" : owner })
+            balance_result = miner.ledger_balance(address=owner)
             balance = balance_result['balance'] / 1.0e8
         except:
             log.error("owner balance fetch failure")
@@ -154,10 +147,6 @@ def stats(miner: MinerJSONRPC):
 
     if in_consensus is not None:
         INCON.labels(my_label).set(in_consensus)
-
-    if validators is not None:
-        staked_validators = [ v for v in validators if v['status'] == 'staked' ]
-        CHAIN_STATS.labels('staked_validators').set(len(staked_validators))
 
     if balance is not None:
         BALANCE.labels(my_label).set(balance)
