@@ -35,15 +35,32 @@ services:
 ## Running locally
 On the miner machine:
 
-install python3
+install python3, python3-venv
+
 ```
-pip install prometheus_client psutil docker
+pip install prometheus_client
 ```
 Details on the libraries:
 * [client\_python](https://github.com/prometheus/client_python)
-* [psutil](https://github.com/giampaolo/psutil)
-* [docker](https://pypi.org/project/docker/)
 
+Then install the service in a home directory:
+
+```
+sudo make install
+```
+
+Then install the systemd unit file:
+
+```
+sudo make install-service
+```
+
+Then enable and start the service:
+
+```
+sudo systemctl enable validator_exporter
+sudo systemctl start validator_exporter
+```
 
 ## Configuration
 
