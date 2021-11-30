@@ -52,5 +52,6 @@ The following have valid defaults, but you can change them:
 UPDATE_PERIOD  # seconds between scrapes, int
 VALIDATOR_CONTAINER_NAME # eg 'validator', string
 API_BASE_URL # URL for api access, string. For testnet, set to "https://testnet-api.helium.wtf/v1"
+API_USER_AGENT # User-Agent for api access, string.  Defaults to "miner_exporter/1.0"
 ENABLE_RPC # opt in to using the RPC API with a truthy value (defaults to falsey value until `exec` calls are fully replaced).
 ```
