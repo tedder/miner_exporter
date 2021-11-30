@@ -26,6 +26,8 @@ UPDATE_PERIOD = int(os.environ.get('UPDATE_PERIOD', 30))
 VALIDATOR_CONTAINER_NAME = os.environ.get('VALIDATOR_CONTAINER_NAME', 'validator')
 # for testnet, https://testnet-api.helium.wtf/v1
 API_BASE_URL = os.environ.get('API_BASE_URL', 'https://api.helium.io/v1')
+# as of nov 2021, all API calls must include a user-agent
+API_USER_AGENT = 'miner_exporter/1.0'
 
 # Gather the ledger penalities for all, instead of just "this" validator. When in this
 # mode all validators from `miner validator ledger` with a penalty >0.0 will be included.
@@ -191,7 +193,10 @@ def stats():
 
 def safe_get_json(url):
   try:
-    ret = requests.get(url)
+    hdrs = {
+      'User-Agent': API_USER_AGENT
+    }
+    ret = requests.get(url,headers=hdrs)
     if not ret.status_code == requests.codes.ok:
       log.error(f"bad status code ({ret.status_code}) from url: {url}")
       return
